@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "likedmusic"
+version = "0.1.0"
+description = "Sync YouTube Music liked songs to Apple Music"
+requires-python = ">=3.10"
+dependencies = [
+    "ytmusicapi>=1.11.0",
+    "yt-dlp",
+    "mutagen",
+    "requests",
+]
+
+[project.scripts]
+likedmusic = "likedmusic.cli:main"
