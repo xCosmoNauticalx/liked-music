@@ -4,4 +4,4 @@ root:
   error-handling:
     description: Error handling approach using Ask for Forgiveness (EAFP) pattern
   virtual-env:
-    description: Always develop and run commands within the project's .venv virtual environment
+    description: Source the project's .venv before running any commands

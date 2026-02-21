@@ -61,7 +61,7 @@ class TestSyncHappyPath:
                 "vid2": Path("/tmp/vid2.m4a"),
             }
 
-            run_sync("id", "secret")
+            run_sync()
 
             mock_dl.assert_called_once()
             assert mock_embed.call_count == 2
@@ -93,7 +93,7 @@ class TestSyncHappyPath:
             mock_fetch.return_value = [FAKE_SONGS[0]]  # only vid1
             mock_dl.return_value = {}
 
-            run_sync("id", "secret")
+            run_sync()
 
             # No new songs to download, order unchanged -> "Already up to date"
             mock_dl.assert_not_called()
@@ -123,7 +123,7 @@ class TestSyncHappyPath:
             # Return songs in reversed order
             mock_fetch.return_value = list(reversed(FAKE_SONGS))
 
-            run_sync("id", "secret")
+            run_sync()
 
             mock_reorder.assert_called_once()
 
@@ -144,7 +144,7 @@ class TestSyncHappyPath:
             mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
             mock_fetch.return_value = []
 
-            run_sync("id", "secret")
+            run_sync()
 
             mock_dl.assert_not_called()
             mock_save.assert_not_called()
@@ -168,7 +168,7 @@ class TestDryRun:
             mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
             mock_fetch.return_value = FAKE_SONGS
 
-            run_sync("id", "secret", dry_run=True)
+            run_sync(dry_run=True)
 
             mock_dl.assert_not_called()
 
@@ -189,7 +189,7 @@ class TestDryRun:
             mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
             mock_fetch.return_value = FAKE_SONGS
 
-            run_sync("id", "secret", dry_run=True)
+            run_sync(dry_run=True)
 
             mock_ensure_pl.assert_not_called()
             mock_add_tracks.assert_not_called()
@@ -211,7 +211,7 @@ class TestDryRun:
             mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
             mock_fetch.return_value = FAKE_SONGS
 
-            run_sync("id", "secret", dry_run=True)
+            run_sync(dry_run=True)
 
             mock_save.assert_not_called()
 
@@ -232,7 +232,7 @@ class TestDryRun:
             mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
             mock_fetch.return_value = FAKE_SONGS
 
-            run_sync("id", "secret", dry_run=True)
+            run_sync(dry_run=True)
 
             captured = capsys.readouterr()
             assert "[DRY RUN]" in captured.out
@@ -264,7 +264,7 @@ class TestDryRun:
             }
             mock_fetch.return_value = list(reversed(FAKE_SONGS))
 
-            run_sync("id", "secret", dry_run=True)
+            run_sync(dry_run=True)
 
             captured = capsys.readouterr()
             assert "Playlist order would change" in captured.out

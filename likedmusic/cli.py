@@ -1,43 +1,23 @@
 """CLI entry point for LikedMusic."""
 
 import argparse
-import os
-import sys
 
 from likedmusic.config import MAX_DOWNLOAD_WORKERS, ensure_dirs
 
 
-def _get_credentials(args: argparse.Namespace) -> tuple[str, str]:
-    """Get client ID and secret from args or environment variables."""
-    client_id = args.client_id or os.environ.get("LIKEDMUSIC_CLIENT_ID")
-    client_secret = args.client_secret or os.environ.get("LIKEDMUSIC_CLIENT_SECRET")
-
-    if not client_id or not client_secret:
-        print(
-            "Error: --client-id and --client-secret are required "
-            "(or set LIKEDMUSIC_CLIENT_ID and LIKEDMUSIC_CLIENT_SECRET).",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    return client_id, client_secret
-
-
 def cmd_setup(args: argparse.Namespace) -> None:
-    """Run OAuth setup flow."""
-    from likedmusic.ytmusic import setup_ytmusic_oauth
+    """Run browser auth setup flow."""
+    from likedmusic.ytmusic import setup_ytmusic_browser
 
     ensure_dirs()
-    client_id, client_secret = _get_credentials(args)
-    setup_ytmusic_oauth(client_id, client_secret)
+    setup_ytmusic_browser()
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
     """Run full sync pipeline."""
     from likedmusic.sync_engine import run_sync
 
-    client_id, client_secret = _get_credentials(args)
-    run_sync(client_id, client_secret, max_workers=args.workers, dry_run=args.dry_run)
+    run_sync(max_workers=args.workers, dry_run=args.dry_run)
 
 
 def main() -> None:
@@ -48,15 +28,11 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # setup subcommand
-    setup_parser = subparsers.add_parser("setup", help="Run OAuth setup flow")
-    setup_parser.add_argument("--client-id", help="Google OAuth client ID")
-    setup_parser.add_argument("--client-secret", help="Google OAuth client secret")
+    setup_parser = subparsers.add_parser("setup", help="Set up browser auth headers")
     setup_parser.set_defaults(func=cmd_setup)
 
     # sync subcommand
     sync_parser = subparsers.add_parser("sync", help="Sync liked songs")
-    sync_parser.add_argument("--client-id", help="Google OAuth client ID")
-    sync_parser.add_argument("--client-secret", help="Google OAuth client secret")
     sync_parser.add_argument(
         "--workers",
         type=int,

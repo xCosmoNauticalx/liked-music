@@ -1,35 +1,28 @@
 """YouTube Music API wrapper for fetching liked songs."""
 
-from ytmusicapi import YTMusic, setup_oauth
+from ytmusicapi import YTMusic, setup
 
-from likedmusic.config import OAUTH_PATH
-
-
-def setup_ytmusic_oauth(client_id: str, client_secret: str) -> None:
-    """Run interactive OAuth flow and save credentials."""
-    setup_oauth(
-        client_id=client_id,
-        client_secret=client_secret,
-        filepath=str(OAUTH_PATH),
-    )
-    print(f"OAuth credentials saved to {OAUTH_PATH}")
+from likedmusic.config import BROWSER_AUTH_PATH
 
 
-def fetch_liked_songs(client_id: str, client_secret: str) -> list[dict]:
+def setup_ytmusic_browser() -> None:
+    """Run interactive browser headers setup and save to disk."""
+    setup(filepath=str(BROWSER_AUTH_PATH))
+    print(f"Browser auth headers saved to {BROWSER_AUTH_PATH}")
+
+
+def fetch_liked_songs() -> list[dict]:
     """Fetch liked songs from YouTube Music.
 
     Returns list of track dicts with videoId, title, artists, album, thumbnails.
     """
-    if not OAUTH_PATH.exists():
+    try:
+        ytm = YTMusic(str(BROWSER_AUTH_PATH))
+    except Exception as e:
         raise FileNotFoundError(
-            f"OAuth credentials not found at {OAUTH_PATH}. "
+            f"Browser auth headers not found at {BROWSER_AUTH_PATH}. "
             "Run 'likedmusic setup' first."
-        )
-
-    ytm = YTMusic(str(OAUTH_PATH), oauth_credentials={
-        "client_id": client_id,
-        "client_secret": client_secret,
-    })
+        ) from e
     response = ytm.get_liked_songs(limit=5000)
     tracks = response.get("tracks", [])
     print(f"Fetched {len(tracks)} liked songs from YouTube Music")

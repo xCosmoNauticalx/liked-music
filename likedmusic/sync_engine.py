@@ -30,8 +30,6 @@ def _backup_file(file_path: Path, title: str, artist: str, video_id: str) -> Non
 
 
 def run_sync(
-    client_id: str,
-    client_secret: str,
     max_workers: int = MAX_DOWNLOAD_WORKERS,
     dry_run: bool = False,
 ) -> None:
@@ -44,7 +42,7 @@ def run_sync(
 
     # 2. Fetch liked songs (newest-first)
     print("Fetching liked songs from YouTube Music...")
-    tracks = ytmusic.fetch_liked_songs(client_id, client_secret)
+    tracks = ytmusic.fetch_liked_songs()
 
     if not tracks:
         print("No liked songs found.")

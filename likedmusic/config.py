@@ -3,7 +3,7 @@
 from pathlib import Path
 
 DATA_DIR = Path.home() / ".likedmusic"
-OAUTH_PATH = DATA_DIR / "oauth.json"
+BROWSER_AUTH_PATH = DATA_DIR / "browser.json"
 STATE_PATH = DATA_DIR / "sync_state.json"
 DOWNLOADS_DIR = DATA_DIR / "downloads"
 BACKUP_DIR = Path.home() / "Music" / "LikedMusic-Backup"
