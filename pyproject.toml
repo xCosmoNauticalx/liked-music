@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "likedmusic"
@@ -14,5 +14,11 @@ dependencies = [
     "requests",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
 [project.scripts]
 likedmusic = "likedmusic.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

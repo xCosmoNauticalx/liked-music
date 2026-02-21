@@ -37,7 +37,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
     from likedmusic.sync_engine import run_sync
 
     client_id, client_secret = _get_credentials(args)
-    run_sync(client_id, client_secret, max_workers=args.workers)
+    run_sync(client_id, client_secret, max_workers=args.workers, dry_run=args.dry_run)
 
 
 def main() -> None:
@@ -62,6 +62,11 @@ def main() -> None:
         type=int,
         default=MAX_DOWNLOAD_WORKERS,
         help=f"Number of download workers (default: {MAX_DOWNLOAD_WORKERS})",
+    )
+    sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview sync actions without downloading or modifying anything",
     )
     sync_parser.set_defaults(func=cmd_sync)
 

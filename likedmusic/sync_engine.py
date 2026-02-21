@@ -33,6 +33,7 @@ def run_sync(
     client_id: str,
     client_secret: str,
     max_workers: int = MAX_DOWNLOAD_WORKERS,
+    dry_run: bool = False,
 ) -> None:
     """Run the full sync pipeline."""
     ensure_dirs()
@@ -54,6 +55,26 @@ def run_sync(
     current_order = [t["videoId"] for t in tracks if t.get("videoId")]
     previous_order = sync_state.get("playlist_order", [])
     order_changed = current_order != previous_order
+
+    # Dry-run: preview what would happen, then exit
+    if dry_run:
+        if new_songs:
+            print(f"[DRY RUN] Would download {len(new_songs)} new song(s):")
+            for song in new_songs:
+                title, artist = metadata.parse_title_artist(
+                    song.get("title", ""),
+                    song.get("artists"),
+                )
+                vid = song["videoId"]
+                print(f"[DRY RUN]   Would download: {artist} - {title} ({vid})")
+            print(
+                f'[DRY RUN] Would add {len(new_songs)} track(s) to Apple Music playlist "{PLAYLIST_NAME}"'
+            )
+        else:
+            print("[DRY RUN] No new songs to download.")
+        if order_changed:
+            print("[DRY RUN] Playlist order would change")
+        return
 
     # 4. Check if already up to date
     if not new_songs and not order_changed:

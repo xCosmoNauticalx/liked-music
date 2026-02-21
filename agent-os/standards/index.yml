@@ -1,2 +1,7 @@
-# Agent OS Standards Index
-
+root:
+  documentation:
+    description: Code comments should explain reasoning and purpose, not restate what the code does
+  error-handling:
+    description: Error handling approach using Ask for Forgiveness (EAFP) pattern
+  virtual-env:
+    description: Always develop and run commands within the project's .venv virtual environment
