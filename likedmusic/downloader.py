@@ -1,12 +1,42 @@
 """Download songs from YouTube Music via yt-dlp."""
 
+import json
 import time
 import yt_dlp
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from likedmusic.config import BROWSER_AUTH_PATH, DATA_DIR
 
-def download_song(video_id: str, output_dir: Path, max_retries: int = 3) -> Path:
+
+def _write_cookie_file() -> Path | None:
+    """Parse cookies from browser.json and write a Netscape-format cookie file.
+
+    Returns the path to the cookie file, or None if browser.json is missing
+    or contains no cookies.
+    """
+    try:
+        headers = json.loads(BROWSER_AUTH_PATH.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+    cookie_str = headers.get("cookie", "")
+    if not cookie_str:
+        return None
+
+    cookie_path = DATA_DIR / "cookies.txt"
+    lines = ["# Netscape HTTP Cookie File"]
+    for pair in cookie_str.split("; "):
+        if "=" not in pair:
+            continue
+        name, value = pair.split("=", 1)
+        lines.append(f".youtube.com\tTRUE\t/\tTRUE\t0\t{name}\t{value}")
+
+    cookie_path.write_text("\n".join(lines) + "\n")
+    return cookie_path
+
+
+def download_song(video_id: str, output_dir: Path, max_retries: int = 3, cookiefile: Path | None = None) -> Path:
     """Download a single song from YouTube Music as an M4A audio file.
 
     This function downloads the best available audio from YouTube Music for the given
@@ -34,15 +64,13 @@ def download_song(video_id: str, output_dir: Path, max_retries: int = 3) -> Path
 
     url = f"https://music.youtube.com/watch?v={video_id}"
     opts = {
-        "format": "bestaudio/best",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "m4a",
-        }],
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": str(output_dir / f"{video_id}.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
     }
+    if cookiefile:
+        opts["cookiefile"] = str(cookiefile)
 
     last_error = None
     for attempt in range(max_retries):
@@ -71,6 +99,7 @@ def download_songs(
     Returns {video_id: file_path} for successful downloads.
     Failed downloads are logged but don't halt the batch.
     """
+    cookiefile = _write_cookie_file()
     results = {}
     failed = []
 
@@ -78,7 +107,7 @@ def download_songs(
         futures = {}
         for song in songs:
             video_id = song["videoId"]
-            future = executor.submit(download_song, video_id, output_dir)
+            future = executor.submit(download_song, video_id, output_dir, cookiefile=cookiefile)
             futures[future] = song
 
         for future in as_completed(futures):

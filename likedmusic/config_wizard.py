@@ -71,7 +71,7 @@ def _fetch_library_playlists() -> list[dict]:
     return library
 
 
-def _prompt_max_workers() -> int:
+def prompt_max_workers() -> int:
     """Ask for max download workers with validation."""
     result = _ask(
         questionary.text(
@@ -137,7 +137,7 @@ def _prompt_apple_music_names(selected: list[dict]) -> list[PlaylistConfig]:
     return playlists
 
 
-def _show_summary(playlists: list[PlaylistConfig], max_workers: int) -> bool:
+def _show_summary(playlists: list[PlaylistConfig]) -> bool:
     """Display a rich table summary and ask for confirmation."""
     console.print()
 
@@ -151,7 +151,6 @@ def _show_summary(playlists: list[PlaylistConfig], max_workers: int) -> bool:
         table.add_row(pl.name, source_type, pl.apple_music_playlist)
 
     console.print(table)
-    console.print(f"\n  Workers: [bold]{max_workers}[/bold]")
     console.print()
 
     return _ask(questionary.confirm("Save this configuration?", default=True).ask())
@@ -161,8 +160,6 @@ def run_wizard() -> None:
     """Main entry point for the interactive config wizard."""
     if not _ensure_auth():
         return
-
-    max_workers = _prompt_max_workers()
 
     try:
         library_playlists = _fetch_library_playlists()
@@ -174,11 +171,11 @@ def run_wizard() -> None:
     selected = _prompt_playlist_selection(library_playlists)
     playlists = _prompt_apple_music_names(selected)
 
-    if not _show_summary(playlists, max_workers):
+    if not _show_summary(playlists):
         console.print("[yellow]Setup cancelled.[/yellow]")
         return
 
-    save_config(playlists, BACKUP_DIR, max_workers)
+    save_config(playlists, BACKUP_DIR)
 
     from likedmusic.config import CONFIG_PATH
 

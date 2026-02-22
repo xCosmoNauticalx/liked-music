@@ -3,6 +3,7 @@
 import argparse
 
 import questionary
+from questionary import Style
 from rich.console import Console
 from rich.panel import Panel
 
@@ -18,6 +19,16 @@ BANNER = r"""
  | |___| |   <  __/ (_| | | |  | | |_| \__ \ | (__
  |_____|_|_|\_\___|\__,_| |_|  |_|\__,_|___/_|\___|
 """
+
+# Sentinel — distinguishes "user chose Quit" from Ctrl+C/ESC (both return None from ask())
+_QUIT = object()
+
+MENU_STYLE = Style([
+    ("pointer",     "fg:#00bfff bold"),
+    ("highlighted", "fg:#00bfff"),
+    ("selected",    "bg:#00bfff fg:white bold"),
+    ("answer",      "fg:#00bfff bold"),
+])
 
 
 def _parse_args() -> bool:
@@ -69,14 +80,16 @@ def main() -> None:
             questionary.Choice(title=f"{a.name} — {a.description}", value=a)
             for a in actions
         ]
-        choices.append(questionary.Choice(title="Quit", value=None))
+        choices.append(questionary.Choice(title="Quit", value=_QUIT))
 
         selected = questionary.select(
             "What would you like to do?",
             choices=choices,
+            style=MENU_STYLE,
         ).ask()
 
-        if selected is None:
+        # None = Ctrl+C or ESC; _QUIT = user selected Quit
+        if selected is None or selected is _QUIT:
             break
 
         try:

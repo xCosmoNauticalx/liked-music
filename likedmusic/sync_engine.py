@@ -75,7 +75,13 @@ def _reorder_songs(playlist_name: str, all_synced_songs: dict, current_order: Li
         print("Playlist reordered.")
 
 
-def _download_new_songs(new_songs: List[dict], playlist_state: dict, max_workers: int, audio_backup_dir: Path) -> dict[str, Path]:
+def _download_new_songs(
+    new_songs: List[dict],
+    playlist_state: dict,
+    max_workers: int,
+    audio_backup_dir: Path,
+    apple_music_added: bool = True,
+) -> dict[str, Path]:
     """Download new songs, embed metadata, create backups, update playlist state."""
     print(f"\nDownloading {len(new_songs)} new song(s)...")
     downloaded = downloader.download_songs(new_songs, DOWNLOADS_DIR, max_workers)
@@ -97,13 +103,20 @@ def _download_new_songs(new_songs: List[dict], playlist_state: dict, max_workers
         print(f"  Tagging: {artist} - {title}")
         metadata.embed_metadata(file_path, title, artist, album, thumbnail_url)
         _backup_file(file_path, title, artist, video_id, audio_backup_dir)
-        state.mark_synced(playlist_state, video_id, title, artist, str(file_path))
+        state.mark_synced(playlist_state, video_id, title, artist, str(file_path), apple_music_added=apple_music_added)
 
     print(f"\n{len(downloaded)} song(s) downloaded and tagged.")
     return downloaded
 
 
-def sync_playlist(playlist_cfg: PlaylistConfig, backup_dir: Path, all_playlists: list[PlaylistConfig], max_workers: int, dry_run: bool) -> None:
+def sync_playlist(
+    playlist_cfg: PlaylistConfig,
+    backup_dir: Path,
+    all_playlists: list[PlaylistConfig],
+    max_workers: int,
+    dry_run: bool,
+    download_only: bool = False,
+) -> None:
     """Synchronize a single playlist from YouTube Music to Apple Music."""
     # Load this playlist's state and cross-playlist data
     playlist_state = state.load_playlist_state(backup_dir, playlist_cfg.name)
@@ -144,43 +157,97 @@ def sync_playlist(playlist_cfg: PlaylistConfig, backup_dir: Path, all_playlists:
     audio_backup_dir = backup_dir / AUDIO_BACKUP_SUBDIR
     downloaded = {}
 
-    if new_songs:
-        downloaded = _download_new_songs(new_songs, playlist_state, max_workers, audio_backup_dir)
-
-    # Save playlist state after downloads
-    state.save_playlist_state(backup_dir, playlist_cfg.name, playlist_state)
-
-    # Ensure Apple Music playlist exists
     try:
-        apple_music.ensure_playlist(playlist_name)
-    except Exception:
-        if input(f'Create Apple Music playlist "{playlist_name}"? [y/N] ').lower() == "y":
-            apple_music.ensure_playlist(playlist_name)
-        else:
-            print("Skipping Apple Music sync.")
+        if new_songs:
+            downloaded = _download_new_songs(
+                new_songs, playlist_state, max_workers, audio_backup_dir,
+                apple_music_added=not download_only,
+            )
+
+        # Save playlist state after downloads
+        state.save_playlist_state(backup_dir, playlist_cfg.name, playlist_state)
+
+        if download_only:
+            print(f"\n[DL ONLY] Downloaded {len(downloaded)} song(s). Not added to Apple Music.")
             state.update_playlist_order(playlist_state, current_order)
             state.save_playlist_state(backup_dir, playlist_cfg.name, playlist_state)
             return
 
-    # Add newly downloaded + already-downloaded-elsewhere tracks to Apple Music
-    all_to_add = {**already_downloaded, **downloaded}
-    if all_to_add:
-        ordered_paths = []
-        for video_id in current_order:
-            if video_id in all_to_add:
-                ordered_paths.append(Path(all_to_add[video_id]))
-        if ordered_paths:
-            print(f"\nAdding {len(ordered_paths)} track(s) to Apple Music...")
-            apple_music.add_tracks_to_playlist(ordered_paths, playlist_name)
+        # Ensure Apple Music playlist exists
+        try:
+            apple_music.ensure_playlist(playlist_name)
+        except Exception:
+            if input(f'Create Apple Music playlist "{playlist_name}"? [y/N] ').lower() == "y":
+                apple_music.ensure_playlist(playlist_name)
+            else:
+                print("Skipping Apple Music sync.")
+                state.update_playlist_order(playlist_state, current_order)
+                state.save_playlist_state(backup_dir, playlist_cfg.name, playlist_state)
+                return
 
-    if order_changed:
-        _reorder_songs(playlist_name, all_synced_songs, current_order)
+        # Add newly downloaded + already-downloaded-elsewhere tracks to Apple Music
+        all_to_add = {**already_downloaded, **downloaded}
+        if all_to_add:
+            ordered_paths = []
+            for video_id in current_order:
+                if video_id in all_to_add:
+                    ordered_paths.append(Path(all_to_add[video_id]))
+            if ordered_paths:
+                print(f"\nAdding {len(ordered_paths)} track(s) to Apple Music...")
+                apple_music.add_tracks_to_playlist(ordered_paths, playlist_name)
 
-    state.update_playlist_order(playlist_state, current_order)
+        if order_changed:
+            _reorder_songs(playlist_name, all_synced_songs, current_order)
+
+        state.update_playlist_order(playlist_state, current_order)
+        state.save_playlist_state(backup_dir, playlist_cfg.name, playlist_state)
+
+    except KeyboardInterrupt:
+        state.save_playlist_state(backup_dir, playlist_cfg.name, playlist_state)
+        print("\n[yellow]Sync interrupted. Progress saved.[/yellow]")
+        raise
+
+
+def add_pending_to_apple_music(
+    playlist_cfg: PlaylistConfig,
+    backup_dir: Path,
+) -> None:
+    """Add songs that were downloaded but not yet added to Apple Music."""
+    playlist_state = state.load_playlist_state(backup_dir, playlist_cfg.name)
+    pending = state.get_pending_songs(playlist_state)
+
+    if not pending:
+        print(f"No pending songs for '{playlist_cfg.name}'.")
+        return
+
+    playlist_name = playlist_cfg.apple_music_playlist
+    print(f"\nAdding {len(pending)} pending song(s) to Apple Music playlist '{playlist_name}'...")
+
+    apple_music.ensure_playlist(playlist_name)
+
+    # Add in playlist order where possible
+    order = state.get_playlist_order(playlist_state)
+    ordered_vids = [vid for vid in order if vid in pending]
+    # Any pending not in order (edge case) appended at the end
+    ordered_vids += [vid for vid in pending if vid not in order]
+
+    ordered_paths = [Path(pending[vid][const.FILE_PATH_KEY]) for vid in ordered_vids]
+    apple_music.add_tracks_to_playlist(ordered_paths, playlist_name)
+
+    for vid in ordered_vids:
+        state.mark_apple_music_added(playlist_state, vid)
+
     state.save_playlist_state(backup_dir, playlist_cfg.name, playlist_state)
+    print(f"{len(ordered_paths)} song(s) added to Apple Music.")
 
 
-def run_sync(max_workers: int | None = None, dry_run: bool = False, playlist_name: str | None = None, sync_all: bool = False) -> None:
+def run_sync(
+    max_workers: int | None = None,
+    dry_run: bool = False,
+    playlist_name: str | None = None,
+    sync_all: bool = False,
+    download_only: bool = False,
+) -> None:
     """Run the sync pipeline for one or more playlists."""
     ensure_dirs()
 
@@ -204,8 +271,12 @@ def run_sync(max_workers: int | None = None, dry_run: bool = False, playlist_nam
     else:
         targets = [pl for pl in playlists if pl.source == const.LIKED_PLAYLIST_KEY]
 
-    for cfg in targets:
-        print(f"\n--- Syncing: {cfg.name} ---")
-        sync_playlist(cfg, backup_dir, playlists, max_workers, dry_run)
+    try:
+        for cfg in targets:
+            print(f"\n--- Syncing: {cfg.name} ---")
+            sync_playlist(cfg, backup_dir, playlists, max_workers, dry_run, download_only=download_only)
+    except KeyboardInterrupt:
+        print("\nSync stopped.")
+        return
 
     print("\nAll syncs complete!")

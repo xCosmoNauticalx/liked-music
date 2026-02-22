@@ -86,12 +86,11 @@ class TestRunWizard:
             mock_fetch.return_value = [{"title": "EDM Bangers", "playlistId": "PL_edm"}]
 
             # Mock questionary calls in order:
-            # 1. _prompt_max_workers -> text("4")
-            # 2. _prompt_playlist_selection -> checkbox([liked, edm])
-            # 3. _prompt_apple_music_names -> text("YTM Liked Songs"), text("EDM Bangers")
-            # 4. _show_summary -> confirm(True)
+            # 1. _prompt_playlist_selection -> checkbox([liked, edm])
+            # 2. _prompt_apple_music_names -> text("YTM Liked Songs"), text("EDM Bangers")
+            # 3. _show_summary -> confirm(True)
             mock_q.Choice = MagicMock(side_effect=lambda **kwargs: kwargs.get("value"))
-            mock_q.text.return_value.ask.side_effect = ["4", "YTM Liked Songs", "EDM Bangers"]
+            mock_q.text.return_value.ask.side_effect = ["YTM Liked Songs", "EDM Bangers"]
             mock_q.checkbox.return_value.ask.return_value = [liked, edm]
             mock_q.confirm.return_value.ask.return_value = True
 
@@ -103,7 +102,6 @@ class TestRunWizard:
             assert len(saved_playlists) == 2
             assert saved_playlists[0].source == "liked"
             assert saved_playlists[1].playlist_id == "PL_edm"
-            assert args[0][2] == 4
 
     def test_aborts_on_ctrl_c(self, tmp_path):
         browser_path = tmp_path / "browser.json"
@@ -111,10 +109,11 @@ class TestRunWizard:
 
         with (
             patch("likedmusic.config_wizard.BROWSER_AUTH_PATH", browser_path),
+            patch("likedmusic.config_wizard._fetch_library_playlists", return_value=[{"title": "Test"}]),
             patch("likedmusic.config_wizard.questionary") as mock_q,
         ):
-            # Simulate Ctrl+C on first prompt (max workers)
-            mock_q.text.return_value.ask.return_value = None
+            # Simulate Ctrl+C on playlist selection (first interactive prompt)
+            mock_q.checkbox.return_value.ask.return_value = None
 
             with pytest.raises(SystemExit):
                 run_wizard()

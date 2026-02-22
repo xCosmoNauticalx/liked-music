@@ -1,68 +1,150 @@
 """Tests for individual action modules."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
 class TestSyncAction:
-    def test_sync_all_with_single_playlist(self):
+    """Tests for the redesigned sync action with pre-fetch and checkbox UI."""
+
+    def _make_playlists(self):
         from likedmusic.playlist_config import PlaylistConfig
-
-        playlists = [PlaylistConfig(name="Liked", source="liked")]
-        with (
-            patch("likedmusic.actions.sync.load_config", return_value=(playlists, "/tmp", 4)),
-            patch("likedmusic.sync_engine.run_sync") as mock_sync,
-        ):
-            from likedmusic.actions.sync import _handle
-            _handle(dry_run=True)
-            mock_sync.assert_called_once_with(dry_run=True, sync_all=True)
-
-    def test_sync_all_selected(self):
-        from likedmusic.playlist_config import PlaylistConfig
-
-        playlists = [
-            PlaylistConfig(name="Liked", source="liked"),
-            PlaylistConfig(name="EDM", source="EDM"),
+        return [
+            PlaylistConfig(name="Liked", source="liked", apple_music_playlist="Liked"),
+            PlaylistConfig(name="EDM", source="EDM", apple_music_playlist="EDM"),
         ]
+
+    def _make_stats(self, playlists, new_counts=None, pending_counts=None):
+        new_counts = new_counts or [0, 0]
+        pending_counts = pending_counts or [0, 0]
+        return [
+            {
+                "playlist": pl,
+                "new_count": nc,
+                "pending_count": pc,
+                "last_sync": "just now",
+                "tracks": [],
+            }
+            for pl, nc, pc in zip(playlists, new_counts, pending_counts)
+        ]
+
+    def test_no_playlists_returns_early(self):
         with (
-            patch("likedmusic.actions.sync.load_config", return_value=(playlists, "/tmp", 4)),
-            patch("questionary.select") as mock_select,
-            patch("likedmusic.sync_engine.run_sync") as mock_sync,
+            patch("likedmusic.actions.sync.load_config", return_value=([], "/tmp", 4)),
+            patch("likedmusic.actions.sync._fetch_all_stats") as mock_fetch,
         ):
-            mock_select.return_value.ask.return_value = "all"
             from likedmusic.actions.sync import _handle
             _handle(dry_run=False)
-            mock_sync.assert_called_once_with(dry_run=False, sync_all=True)
+            mock_fetch.assert_not_called()
 
-    def test_sync_specific_playlist(self):
-        from likedmusic.playlist_config import PlaylistConfig
+    def test_checkbox_none_returns_early(self):
+        playlists = self._make_playlists()
+        stats = self._make_stats(playlists, new_counts=[3, 0])
 
-        playlists = [
-            PlaylistConfig(name="Liked", source="liked"),
-            PlaylistConfig(name="EDM", source="EDM"),
-        ]
         with (
-            patch("likedmusic.actions.sync.load_config", return_value=(playlists, "/tmp", 4)),
-            patch("questionary.select") as mock_select,
+            patch("likedmusic.actions.sync.load_config", return_value=(playlists, Path("/tmp"), 4)),
+            patch("likedmusic.actions.sync._fetch_all_stats", return_value=stats),
+            patch("likedmusic.actions.sync.questionary") as mock_q,
             patch("likedmusic.sync_engine.run_sync") as mock_sync,
         ):
-            mock_select.return_value.ask.return_value = "EDM"
+            mock_q.checkbox.return_value.ask.return_value = None
+            from likedmusic.actions.sync import _handle
+            _handle(dry_run=False)
+            mock_sync.assert_not_called()
+
+    def test_nothing_selected_returns_early(self):
+        playlists = self._make_playlists()
+        stats = self._make_stats(playlists)
+
+        with (
+            patch("likedmusic.actions.sync.load_config", return_value=(playlists, Path("/tmp"), 4)),
+            patch("likedmusic.actions.sync._fetch_all_stats", return_value=stats),
+            patch("likedmusic.actions.sync.questionary") as mock_q,
+            patch("likedmusic.sync_engine.run_sync") as mock_sync,
+        ):
+            mock_q.checkbox.return_value.ask.return_value = []
+            from likedmusic.actions.sync import _handle
+            _handle(dry_run=False)
+            mock_sync.assert_not_called()
+
+    def test_sync_selected_playlist(self):
+        playlists = self._make_playlists()
+        stats = self._make_stats(playlists, new_counts=[5, 0])
+
+        with (
+            patch("likedmusic.actions.sync.load_config", return_value=(playlists, Path("/tmp"), 4)),
+            patch("likedmusic.actions.sync._fetch_all_stats", return_value=stats),
+            patch("likedmusic.actions.sync.questionary") as mock_q,
+            patch("likedmusic.actions.sync.prompt_max_workers", return_value=4),
+            patch("likedmusic.sync_engine.run_sync") as mock_sync,
+        ):
+            mock_q.checkbox.return_value.ask.return_value = ["Liked"]
+            mock_q.select.return_value.ask.return_value = "Download + Apple Music"
+
             from likedmusic.actions.sync import _handle
             _handle(dry_run=True)
-            mock_sync.assert_called_once_with(dry_run=True, playlist_name="EDM")
 
-    def test_sync_cancelled(self):
-        from likedmusic.playlist_config import PlaylistConfig
+            mock_sync.assert_called_once_with(
+                max_workers=4,
+                dry_run=True,
+                playlist_name="Liked",
+                download_only=False,
+            )
 
-        playlists = [
-            PlaylistConfig(name="Liked", source="liked"),
-            PlaylistConfig(name="EDM", source="EDM"),
-        ]
+    def test_sync_download_only_mode(self):
+        playlists = self._make_playlists()
+        stats = self._make_stats(playlists, new_counts=[2, 0])
+
         with (
-            patch("likedmusic.actions.sync.load_config", return_value=(playlists, "/tmp", 4)),
-            patch("questionary.select") as mock_select,
+            patch("likedmusic.actions.sync.load_config", return_value=(playlists, Path("/tmp"), 4)),
+            patch("likedmusic.actions.sync._fetch_all_stats", return_value=stats),
+            patch("likedmusic.actions.sync.questionary") as mock_q,
+            patch("likedmusic.actions.sync.prompt_max_workers", return_value=2),
             patch("likedmusic.sync_engine.run_sync") as mock_sync,
         ):
-            mock_select.return_value.ask.return_value = None
+            mock_q.checkbox.return_value.ask.return_value = ["Liked"]
+            mock_q.select.return_value.ask.return_value = "Download only (skip Apple Music)"
+
+            from likedmusic.actions.sync import _handle
+            _handle(dry_run=False)
+
+            mock_sync.assert_called_once_with(
+                max_workers=2,
+                dry_run=False,
+                playlist_name="Liked",
+                download_only=True,
+            )
+
+    def test_add_pending_selected(self):
+        playlists = self._make_playlists()
+        stats = self._make_stats(playlists, pending_counts=[3, 0])
+
+        with (
+            patch("likedmusic.actions.sync.load_config", return_value=(playlists, Path("/tmp"), 4)),
+            patch("likedmusic.actions.sync._fetch_all_stats", return_value=stats),
+            patch("likedmusic.actions.sync.questionary") as mock_q,
+            patch("likedmusic.sync_engine.add_pending_to_apple_music") as mock_pending,
+        ):
+            mock_q.checkbox.return_value.ask.return_value = ["__add_pending__"]
+
+            from likedmusic.actions.sync import _handle
+            _handle(dry_run=False)
+
+            mock_pending.assert_called_once_with(playlists[0], Path("/tmp"))
+
+    def test_workers_none_returns_early(self):
+        playlists = self._make_playlists()
+        stats = self._make_stats(playlists, new_counts=[1, 0])
+
+        with (
+            patch("likedmusic.actions.sync.load_config", return_value=(playlists, Path("/tmp"), 4)),
+            patch("likedmusic.actions.sync._fetch_all_stats", return_value=stats),
+            patch("likedmusic.actions.sync.questionary") as mock_q,
+            patch("likedmusic.actions.sync.prompt_max_workers", return_value=None),
+            patch("likedmusic.sync_engine.run_sync") as mock_sync,
+        ):
+            mock_q.checkbox.return_value.ask.return_value = ["Liked"]
+
             from likedmusic.actions.sync import _handle
             _handle(dry_run=False)
             mock_sync.assert_not_called()

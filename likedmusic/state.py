@@ -132,6 +132,28 @@ def load_all_synced_songs(backup_dir: Path) -> dict[str, dict]:
     return merged
 
 
+def load_all_pending_songs(backup_dir: Path) -> dict[str, dict]:
+    """Scan all playlist .json files and return songs not yet added to Apple Music."""
+    merged: dict[str, dict] = {}
+    try:
+        json_files = list(backup_dir.glob("*.json"))
+    except FileNotFoundError:
+        return merged
+
+    for path in json_files:
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not _verify_checksum(data):
+            continue
+        for vid, info in data.get(const.SYNCED_SONGS_KEY, {}).items():
+            if not info.get("apple_music_added", True):
+                merged[vid] = info
+
+    return merged
+
+
 # --- Pure dict helpers (work on a single playlist state dict) ---
 
 
@@ -140,14 +162,39 @@ def get_synced_video_ids(state: dict) -> set[str]:
     return set(state.get(const.SYNCED_SONGS_KEY, {}).keys())
 
 
-def mark_synced(state: dict, video_id: str, title: str, artist: str, file_path: str) -> None:
+def mark_synced(
+    state: dict,
+    video_id: str,
+    title: str,
+    artist: str,
+    file_path: str,
+    apple_music_added: bool = True,
+) -> None:
     """Record a song as synced in the playlist state dict."""
     state.setdefault(const.SYNCED_SONGS_KEY, {})[video_id] = {
         const.TITLE_KEY: title,
         const.ARTIST_KEY: artist,
         const.FILE_PATH_KEY: file_path,
         const.SYNCED_AT_KEY: datetime.now(timezone.utc).isoformat(),
+        "apple_music_added": apple_music_added,
     }
+
+
+def get_pending_songs(state: dict) -> dict[str, dict]:
+    """Return songs downloaded but not yet added to Apple Music.
+
+    Missing apple_music_added field means it was added before this feature existed → treat as True.
+    """
+    return {
+        vid: info
+        for vid, info in state.get(const.SYNCED_SONGS_KEY, {}).items()
+        if not info.get("apple_music_added", True)
+    }
+
+
+def mark_apple_music_added(state: dict, video_id: str) -> None:
+    """Mark a downloaded song as added to Apple Music."""
+    state[const.SYNCED_SONGS_KEY][video_id]["apple_music_added"] = True
 
 
 def get_playlist_order(state: dict) -> list[str]:
