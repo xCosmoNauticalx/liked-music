@@ -45,24 +45,12 @@ class TestEnsureAuth:
 
 
 class TestPromptPlaylistSelection:
-    def test_always_includes_liked_songs(self):
-        mock_result = [
-            {"title": "YTM Liked Songs", "playlistId": None, "source": "liked"},
-        ]
-        with patch("likedmusic.config_wizard.questionary") as mock_q:
-            mock_q.Choice = MagicMock(side_effect=lambda **kwargs: kwargs.get("value"))
-            mock_q.checkbox.return_value.ask.return_value = mock_result
-            result = _prompt_playlist_selection([])
-
-        assert any(item["source"] == "liked" for item in result)
-
-    def test_includes_selected_library_playlists(self):
+    def test_returns_selected_playlists(self):
         library = [
             {"title": "EDM Bangers", "playlistId": "PL_edm"},
             {"title": "Chill Vibes", "playlistId": "PL_chill"},
         ]
         mock_result = [
-            {"title": "YTM Liked Songs", "playlistId": None, "source": "liked"},
             {"title": "EDM Bangers", "playlistId": "PL_edm", "source": "EDM Bangers"},
         ]
         with patch("likedmusic.config_wizard.questionary") as mock_q:
@@ -70,8 +58,16 @@ class TestPromptPlaylistSelection:
             mock_q.checkbox.return_value.ask.return_value = mock_result
             result = _prompt_playlist_selection(library)
 
-        assert len(result) == 2
-        assert result[1]["title"] == "EDM Bangers"
+        assert len(result) == 1
+        assert result[0]["title"] == "EDM Bangers"
+
+    def test_empty_library_shows_empty_choices(self):
+        with patch("likedmusic.config_wizard.questionary") as mock_q:
+            mock_q.Choice = MagicMock(side_effect=lambda **kwargs: kwargs.get("value"))
+            mock_q.checkbox.return_value.ask.return_value = []
+            _prompt_playlist_selection([])
+
+        mock_q.checkbox.assert_called_once()
 
 
 class TestRunWizard:

@@ -1,64 +1,164 @@
-"""Tests for likedmusic.state — load_state and save_state (file I/O)."""
+"""Tests for per-playlist state I/O with checksum integrity."""
 
 import json
-from unittest.mock import patch
 
-import pytest
-
-from likedmusic.state import load_state, save_state
-
-
-class TestLoadState:
-    def test_file_exists_valid_json(self, tmp_path):
-        state_path = tmp_path / "sync_state.json"
-        data = {"synced_songs": {"vid1": {}}, "last_sync": None, "playlist_order": []}
-        state_path.write_text(json.dumps(data))
-
-        with patch("likedmusic.state.config.STATE_PATH", state_path):
-            result = load_state()
-
-        assert result == data
-
-    def test_file_missing_returns_default(self, tmp_path):
-        state_path = tmp_path / "nonexistent.json"
-        with patch("likedmusic.state.config.STATE_PATH", state_path):
-            result = load_state()
-
-        assert result == {
-            "synced_songs": {},
-            "last_sync": None,
-            "playlist_order": [],
-        }
-
-    def test_malformed_json_raises(self, tmp_path):
-        state_path = tmp_path / "sync_state.json"
-        state_path.write_text("{not valid json")
-
-        with patch("likedmusic.state.config.STATE_PATH", state_path):
-            with pytest.raises(json.JSONDecodeError):
-                load_state()
+from likedmusic.state import (
+    _compute_checksum,
+    _sanitize_state_filename,
+    _verify_checksum,
+    load_all_synced_ids,
+    load_all_synced_songs,
+    load_playlist_state,
+    save_playlist_state,
+)
 
 
-class TestSaveState:
-    def test_atomic_write(self, tmp_path):
-        state_path = tmp_path / "sync_state.json"
-        data = {"synced_songs": {}, "playlist_order": []}
+class TestSanitizeStateFilename:
+    def test_replaces_spaces_and_special_chars(self):
+        assert _sanitize_state_filename("YTM Liked Songs") == "YTM_Liked_Songs"
 
-        with patch("likedmusic.state.config.STATE_PATH", state_path):
-            save_state(data)
+    def test_replaces_slashes(self):
+        assert _sanitize_state_filename("A/B\\C") == "A_B_C"
 
-        assert state_path.exists()
-        saved = json.loads(state_path.read_text())
-        assert "last_sync" in saved
-        assert saved["synced_songs"] == {}
+    def test_strips_leading_trailing_underscores(self):
+        assert _sanitize_state_filename(" hello ") == "hello"
+
+
+class TestChecksum:
+    def test_deterministic(self):
+        payload = {"b": 2, "a": 1}
+        assert _compute_checksum(payload) == _compute_checksum({"a": 1, "b": 2})
+
+    def test_verify_valid(self):
+        payload = {"synced_songs": {}, "playlist_order": []}
+        checksum = _compute_checksum(payload)
+        data = {"checksum": checksum, **payload}
+        assert _verify_checksum(data) is True
+
+    def test_verify_tampered(self):
+        payload = {"synced_songs": {}, "playlist_order": []}
+        data = {"checksum": "wrong", **payload}
+        assert _verify_checksum(data) is False
+
+    def test_verify_missing_checksum(self):
+        assert _verify_checksum({"synced_songs": {}}) is False
+
+
+class TestSavePlaylistState:
+    def test_creates_file_with_checksum(self, tmp_path):
+        state = {"synced_songs": {"vid1": {"title": "Song"}}, "playlist_order": ["vid1"]}
+        save_playlist_state(tmp_path, "My Playlist", state)
+
+        path = tmp_path / "My_Playlist.json"
+        assert path.exists()
+        data = json.loads(path.read_text())
+        assert "checksum" in data
+        assert _verify_checksum(data) is True
+        assert data["playlist_name"] == "My Playlist"
+        assert "last_sync" in data
+
+    def test_creates_bak_on_second_write(self, tmp_path):
+        state = {"synced_songs": {}, "playlist_order": []}
+        save_playlist_state(tmp_path, "Test", state)
+
+        state["synced_songs"]["vid1"] = {"title": "New"}
+        save_playlist_state(tmp_path, "Test", state)
+
+        bak_path = tmp_path / "Test.json.bak"
+        assert bak_path.exists()
+        bak_data = json.loads(bak_path.read_text())
+        assert "vid1" not in bak_data.get("synced_songs", {})
 
     def test_overwrites_existing(self, tmp_path):
-        state_path = tmp_path / "sync_state.json"
-        state_path.write_text(json.dumps({"old": True}))
+        save_playlist_state(tmp_path, "X", {"synced_songs": {"old": {}}, "playlist_order": []})
+        save_playlist_state(tmp_path, "X", {"synced_songs": {"new": {}}, "playlist_order": []})
 
-        data = {"synced_songs": {"new": {}}, "playlist_order": []}
-        with patch("likedmusic.state.config.STATE_PATH", state_path):
-            save_state(data)
+        data = json.loads((tmp_path / "X.json").read_text())
+        assert "new" in data["synced_songs"]
 
-        saved = json.loads(state_path.read_text())
-        assert "new" in saved["synced_songs"]
+
+class TestLoadPlaylistState:
+    def test_valid_file(self, tmp_path):
+        state = {"synced_songs": {"vid1": {"title": "A"}}, "playlist_order": ["vid1"]}
+        save_playlist_state(tmp_path, "PL", state)
+
+        loaded = load_playlist_state(tmp_path, "PL")
+        assert "vid1" in loaded["synced_songs"]
+        assert "checksum" not in loaded
+
+    def test_missing_returns_default(self, tmp_path):
+        loaded = load_playlist_state(tmp_path, "Nonexistent")
+        assert loaded["synced_songs"] == {}
+        assert loaded["playlist_order"] == []
+        assert loaded["playlist_name"] == "Nonexistent"
+
+    def test_corrupt_falls_back_to_bak(self, tmp_path):
+        state = {"synced_songs": {"vid1": {"title": "Good"}}, "playlist_order": ["vid1"]}
+        save_playlist_state(tmp_path, "PL", state)
+
+        state["synced_songs"]["vid2"] = {"title": "Bad"}
+        save_playlist_state(tmp_path, "PL", state)
+
+        # Corrupt the main file
+        main_path = tmp_path / "PL.json"
+        main_path.write_text("{corrupted}")
+
+        loaded = load_playlist_state(tmp_path, "PL")
+        # Should load from .bak (which has only vid1)
+        assert "vid1" in loaded["synced_songs"]
+        assert "vid2" not in loaded["synced_songs"]
+
+    def test_both_corrupt_returns_default(self, tmp_path):
+        save_playlist_state(tmp_path, "PL", {"synced_songs": {}, "playlist_order": []})
+        save_playlist_state(tmp_path, "PL", {"synced_songs": {}, "playlist_order": []})
+
+        (tmp_path / "PL.json").write_text("bad")
+        (tmp_path / "PL.json.bak").write_text("bad")
+
+        loaded = load_playlist_state(tmp_path, "PL")
+        assert loaded["synced_songs"] == {}
+
+
+class TestLoadAllSyncedIds:
+    def test_across_playlists(self, tmp_path):
+        save_playlist_state(tmp_path, "A", {
+            "synced_songs": {"vid1": {"title": "S1"}, "vid2": {"title": "S2"}},
+            "playlist_order": ["vid1", "vid2"],
+        })
+        save_playlist_state(tmp_path, "B", {
+            "synced_songs": {"vid2": {"title": "S2"}, "vid3": {"title": "S3"}},
+            "playlist_order": ["vid2", "vid3"],
+        })
+
+        ids = load_all_synced_ids(tmp_path)
+        assert ids == {"vid1", "vid2", "vid3"}
+
+    def test_skips_corrupt(self, tmp_path):
+        save_playlist_state(tmp_path, "Good", {
+            "synced_songs": {"vid1": {"title": "S1"}},
+            "playlist_order": ["vid1"],
+        })
+        (tmp_path / "Bad.json").write_text("not json")
+
+        ids = load_all_synced_ids(tmp_path)
+        assert ids == {"vid1"}
+
+    def test_empty_dir(self, tmp_path):
+        assert load_all_synced_ids(tmp_path) == set()
+
+
+class TestLoadAllSyncedSongs:
+    def test_merges_across_playlists(self, tmp_path):
+        save_playlist_state(tmp_path, "A", {
+            "synced_songs": {"vid1": {"title": "S1", "file_path": "/a/vid1.m4a"}},
+            "playlist_order": [],
+        })
+        save_playlist_state(tmp_path, "B", {
+            "synced_songs": {"vid2": {"title": "S2", "file_path": "/b/vid2.m4a"}},
+            "playlist_order": [],
+        })
+
+        songs = load_all_synced_songs(tmp_path)
+        assert "vid1" in songs
+        assert "vid2" in songs
+        assert songs["vid1"]["file_path"] == "/a/vid1.m4a"

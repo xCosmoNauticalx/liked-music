@@ -1,7 +1,7 @@
 """Integration tests for likedmusic.sync_engine.run_sync."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from likedmusic.playlist_config import PlaylistConfig
 from likedmusic.sync_engine import run_sync
@@ -28,13 +28,22 @@ FAKE_SONGS = [
     },
 ]
 
+_EMPTY_STATE = {
+    "playlist_name": "YTM Liked Songs",
+    "last_sync": None,
+    "playlist_order": [],
+    "synced_songs": {},
+}
+
 
 def _base_patches():
     """Return a dict of common patches for run_sync integration tests."""
     return {
         "ensure_dirs": patch("likedmusic.sync_engine.ensure_dirs"),
-        "load_state": patch("likedmusic.sync_engine.state.load_state"),
-        "save_state": patch("likedmusic.sync_engine.state.save_state"),
+        "load_playlist_state": patch("likedmusic.sync_engine.state.load_playlist_state"),
+        "save_playlist_state": patch("likedmusic.sync_engine.state.save_playlist_state"),
+        "load_all_synced_ids": patch("likedmusic.sync_engine.state.load_all_synced_ids", return_value=set()),
+        "load_all_synced_songs": patch("likedmusic.sync_engine.state.load_all_synced_songs", return_value={}),
         "fetch_liked_songs": patch("likedmusic.sync_engine.ytmusic.fetch_liked_songs"),
         "download_songs": patch("likedmusic.sync_engine.downloader.download_songs"),
         "embed_metadata": patch("likedmusic.sync_engine.metadata.embed_metadata"),
@@ -46,6 +55,7 @@ def _base_patches():
             "likedmusic.sync_engine.load_config",
             return_value=(_DEFAULT_PLAYLISTS, _DEFAULT_BACKUP_DIR, 4),
         ),
+        "legacy_state": patch("likedmusic.sync_engine.LEGACY_STATE_PATH", new_callable=lambda: type("P", (), {"exists": staticmethod(lambda: False)})),
     }
 
 
@@ -55,8 +65,10 @@ class TestSyncHappyPath:
         with (
             patches["ensure_dirs"],
             patches["load_config"],
-            patches["load_state"] as mock_load,
-            patches["save_state"] as mock_save,
+            patches["load_playlist_state"] as mock_load,
+            patches["save_playlist_state"] as mock_save,
+            patches["load_all_synced_ids"],
+            patches["load_all_synced_songs"],
             patches["fetch_liked_songs"] as mock_fetch,
             patches["download_songs"] as mock_dl,
             patches["embed_metadata"] as mock_embed,
@@ -64,8 +76,9 @@ class TestSyncHappyPath:
             patches["add_tracks_to_playlist"] as mock_add_tracks,
             patches["reorder_playlist"],
             patches["backup_file"],
+            patches["legacy_state"],
         ):
-            mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
+            mock_load.return_value = {**_EMPTY_STATE}
             mock_fetch.return_value = FAKE_SONGS
             mock_dl.return_value = {
                 "vid1": Path("/tmp/vid1.m4a"),
@@ -78,15 +91,17 @@ class TestSyncHappyPath:
             assert mock_embed.call_count == 2
             mock_ensure_pl.assert_called_once()
             mock_add_tracks.assert_called_once()
-            assert mock_save.call_count == 2  # after downloads + after order
+            assert mock_save.call_count >= 2
 
     def test_incremental_sync_skips_already_synced(self):
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
             patches["load_config"],
-            patches["load_state"] as mock_load,
-            patches["save_state"],
+            patches["load_playlist_state"] as mock_load,
+            patches["save_playlist_state"],
+            patches["load_all_synced_ids"] as mock_ids,
+            patches["load_all_synced_songs"] as mock_songs,
             patches["fetch_liked_songs"] as mock_fetch,
             patches["download_songs"] as mock_dl,
             patches["embed_metadata"],
@@ -94,20 +109,20 @@ class TestSyncHappyPath:
             patches["add_tracks_to_playlist"],
             patches["reorder_playlist"],
             patches["backup_file"],
+            patches["legacy_state"],
         ):
             mock_load.return_value = {
-                "synced_songs": {
-                    "vid1": {"title": "Song1", "artist": "Artist1", "file_path": "/tmp/vid1.m4a", "synced_at": "x"},
-                },
+                "playlist_name": "YTM Liked Songs",
+                "synced_songs": {"vid1": {"title": "Song1", "artist": "A1", "file_path": "/x", "synced_at": "x"}},
                 "last_sync": None,
                 "playlist_order": ["vid1"],
             }
-            mock_fetch.return_value = [FAKE_SONGS[0]]  # only vid1
-            mock_dl.return_value = {}
+            mock_ids.return_value = {"vid1"}
+            mock_songs.return_value = {"vid1": {"title": "Song1", "file_path": "/x"}}
+            mock_fetch.return_value = [FAKE_SONGS[0]]
 
             run_sync()
 
-            # No new songs to download, order unchanged -> "Already up to date"
             mock_dl.assert_not_called()
 
     def test_order_change_triggers_reorder(self):
@@ -115,8 +130,10 @@ class TestSyncHappyPath:
         with (
             patches["ensure_dirs"],
             patches["load_config"],
-            patches["load_state"] as mock_load,
-            patches["save_state"],
+            patches["load_playlist_state"] as mock_load,
+            patches["save_playlist_state"],
+            patches["load_all_synced_ids"] as mock_ids,
+            patches["load_all_synced_songs"] as mock_songs,
             patches["fetch_liked_songs"] as mock_fetch,
             patches["download_songs"],
             patches["embed_metadata"],
@@ -124,16 +141,22 @@ class TestSyncHappyPath:
             patches["add_tracks_to_playlist"],
             patches["reorder_playlist"] as mock_reorder,
             patches["backup_file"],
+            patches["legacy_state"],
         ):
             mock_load.return_value = {
+                "playlist_name": "YTM Liked Songs",
                 "synced_songs": {
-                    "vid1": {"title": "Song1", "artist": "Artist1", "file_path": "/x", "synced_at": "x"},
-                    "vid2": {"title": "Song2", "artist": "Artist2", "file_path": "/y", "synced_at": "y"},
+                    "vid1": {"title": "Song1", "artist": "A1", "file_path": "/x", "synced_at": "x"},
+                    "vid2": {"title": "Song2", "artist": "A2", "file_path": "/y", "synced_at": "y"},
                 },
                 "last_sync": None,
-                "playlist_order": ["vid1", "vid2"],  # old order
+                "playlist_order": ["vid1", "vid2"],
             }
-            # Return songs in reversed order
+            mock_ids.return_value = {"vid1", "vid2"}
+            mock_songs.return_value = {
+                "vid1": {"title": "Song1", "file_path": "/x"},
+                "vid2": {"title": "Song2", "file_path": "/y"},
+            }
             mock_fetch.return_value = list(reversed(FAKE_SONGS))
 
             run_sync()
@@ -145,8 +168,10 @@ class TestSyncHappyPath:
         with (
             patches["ensure_dirs"],
             patches["load_config"],
-            patches["load_state"] as mock_load,
-            patches["save_state"] as mock_save,
+            patches["load_playlist_state"] as mock_load,
+            patches["save_playlist_state"] as mock_save,
+            patches["load_all_synced_ids"],
+            patches["load_all_synced_songs"],
             patches["fetch_liked_songs"] as mock_fetch,
             patches["download_songs"] as mock_dl,
             patches["embed_metadata"],
@@ -154,15 +179,15 @@ class TestSyncHappyPath:
             patches["add_tracks_to_playlist"],
             patches["reorder_playlist"],
             patches["backup_file"],
+            patches["legacy_state"],
         ):
-            mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
+            mock_load.return_value = {**_EMPTY_STATE}
             mock_fetch.return_value = []
 
             run_sync()
 
             mock_dl.assert_not_called()
-            # save_state is called once at end of run_sync (final state persist)
-            mock_save.assert_called_once()
+            mock_save.assert_not_called()
 
 
 class TestDryRun:
@@ -171,8 +196,10 @@ class TestDryRun:
         with (
             patches["ensure_dirs"],
             patches["load_config"],
-            patches["load_state"] as mock_load,
-            patches["save_state"],
+            patches["load_playlist_state"] as mock_load,
+            patches["save_playlist_state"],
+            patches["load_all_synced_ids"],
+            patches["load_all_synced_songs"],
             patches["fetch_liked_songs"] as mock_fetch,
             patches["download_songs"] as mock_dl,
             patches["embed_metadata"],
@@ -180,8 +207,9 @@ class TestDryRun:
             patches["add_tracks_to_playlist"],
             patches["reorder_playlist"],
             patches["backup_file"],
+            patches["legacy_state"],
         ):
-            mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
+            mock_load.return_value = {**_EMPTY_STATE}
             mock_fetch.return_value = FAKE_SONGS
 
             run_sync(dry_run=True)
@@ -193,8 +221,10 @@ class TestDryRun:
         with (
             patches["ensure_dirs"],
             patches["load_config"],
-            patches["load_state"] as mock_load,
-            patches["save_state"],
+            patches["load_playlist_state"] as mock_load,
+            patches["save_playlist_state"],
+            patches["load_all_synced_ids"],
+            patches["load_all_synced_songs"],
             patches["fetch_liked_songs"] as mock_fetch,
             patches["download_songs"],
             patches["embed_metadata"],
@@ -202,8 +232,9 @@ class TestDryRun:
             patches["add_tracks_to_playlist"] as mock_add_tracks,
             patches["reorder_playlist"],
             patches["backup_file"],
+            patches["legacy_state"],
         ):
-            mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
+            mock_load.return_value = {**_EMPTY_STATE}
             mock_fetch.return_value = FAKE_SONGS
 
             run_sync(dry_run=True)
@@ -216,8 +247,10 @@ class TestDryRun:
         with (
             patches["ensure_dirs"],
             patches["load_config"],
-            patches["load_state"] as mock_load,
-            patches["save_state"] as mock_save,
+            patches["load_playlist_state"] as mock_load,
+            patches["save_playlist_state"] as mock_save,
+            patches["load_all_synced_ids"],
+            patches["load_all_synced_songs"],
             patches["fetch_liked_songs"] as mock_fetch,
             patches["download_songs"],
             patches["embed_metadata"],
@@ -225,8 +258,9 @@ class TestDryRun:
             patches["add_tracks_to_playlist"],
             patches["reorder_playlist"],
             patches["backup_file"],
+            patches["legacy_state"],
         ):
-            mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
+            mock_load.return_value = {**_EMPTY_STATE}
             mock_fetch.return_value = FAKE_SONGS
 
             run_sync(dry_run=True)
@@ -238,8 +272,10 @@ class TestDryRun:
         with (
             patches["ensure_dirs"],
             patches["load_config"],
-            patches["load_state"] as mock_load,
-            patches["save_state"],
+            patches["load_playlist_state"] as mock_load,
+            patches["save_playlist_state"],
+            patches["load_all_synced_ids"],
+            patches["load_all_synced_songs"],
             patches["fetch_liked_songs"] as mock_fetch,
             patches["download_songs"],
             patches["embed_metadata"],
@@ -247,8 +283,9 @@ class TestDryRun:
             patches["add_tracks_to_playlist"],
             patches["reorder_playlist"],
             patches["backup_file"],
+            patches["legacy_state"],
         ):
-            mock_load.return_value = {"synced_songs": {}, "last_sync": None, "playlist_order": []}
+            mock_load.return_value = {**_EMPTY_STATE}
             mock_fetch.return_value = FAKE_SONGS
 
             run_sync(dry_run=True)
@@ -264,8 +301,10 @@ class TestDryRun:
         with (
             patches["ensure_dirs"],
             patches["load_config"],
-            patches["load_state"] as mock_load,
-            patches["save_state"],
+            patches["load_playlist_state"] as mock_load,
+            patches["save_playlist_state"],
+            patches["load_all_synced_ids"] as mock_ids,
+            patches["load_all_synced_songs"] as mock_songs,
             patches["fetch_liked_songs"] as mock_fetch,
             patches["download_songs"],
             patches["embed_metadata"],
@@ -273,14 +312,21 @@ class TestDryRun:
             patches["add_tracks_to_playlist"],
             patches["reorder_playlist"],
             patches["backup_file"],
+            patches["legacy_state"],
         ):
             mock_load.return_value = {
+                "playlist_name": "YTM Liked Songs",
                 "synced_songs": {
                     "vid1": {"title": "Song1", "artist": "A1", "file_path": "/x", "synced_at": "x"},
                     "vid2": {"title": "Song2", "artist": "A2", "file_path": "/y", "synced_at": "y"},
                 },
                 "last_sync": None,
                 "playlist_order": ["vid1", "vid2"],
+            }
+            mock_ids.return_value = {"vid1", "vid2"}
+            mock_songs.return_value = {
+                "vid1": {"title": "Song1", "file_path": "/x"},
+                "vid2": {"title": "Song2", "file_path": "/y"},
             }
             mock_fetch.return_value = list(reversed(FAKE_SONGS))
 

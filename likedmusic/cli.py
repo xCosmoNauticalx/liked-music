@@ -2,93 +2,93 @@
 
 import argparse
 
+import questionary
+from rich.console import Console
+from rich.panel import Panel
+
+from likedmusic.actions.base import get_actions
 from likedmusic.config import CONFIG_PATH, ensure_dirs
 
+console = Console()
 
-def cmd_setup(args: argparse.Namespace) -> None:
-    """Run browser auth setup flow."""
-    from likedmusic.ytmusic import setup_ytmusic_browser
+BANNER = r"""
+  _     _ _            _   __  __           _
+ | |   (_) | _____  __| | |  \/  |_   _ ___(_) ___
+ | |   | | |/ / _ \/ _` | | |\/| | | | / __| |/ __|
+ | |___| |   <  __/ (_| | | |  | | |_| \__ \ | (__
+ |_____|_|_|\_\___|\__,_| |_|  |_|\__,_|___/_|\___|
+"""
 
-    ensure_dirs()
-    setup_ytmusic_browser()
+
+def _parse_args() -> bool:
+    """Parse CLI args. Returns dry_run flag."""
+    parser = argparse.ArgumentParser(
+        prog="likedmusic",
+        description="Sync YouTube Music playlists to Apple Music",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview all actions without making changes",
+    )
+    args = parser.parse_args()
+    return args.dry_run
 
 
-def cmd_config(args: argparse.Namespace) -> None:
-    """Run interactive config wizard."""
+def _auto_setup() -> None:
+    """If no config exists, run the config wizard automatically."""
+    if CONFIG_PATH.exists():
+        return
+
+    console.print("[yellow]No configuration found. Starting setup wizard...[/yellow]\n")
     from likedmusic.config_wizard import run_wizard
 
-    ensure_dirs()
     run_wizard()
 
-
-def cmd_sync(args: argparse.Namespace) -> None:
-    """Run full sync pipeline."""
     if not CONFIG_PATH.exists():
-        import questionary
-
-        if questionary.confirm("No config found. Run setup wizard?", default=True).ask():
-            from likedmusic.config_wizard import run_wizard
-
-            ensure_dirs()
-            run_wizard()
-            if not CONFIG_PATH.exists():
-                return
-
-    from likedmusic.sync_engine import run_sync
-
-    run_sync(
-        max_workers=args.workers,
-        dry_run=args.dry_run,
-        playlist_name=args.playlist,
-        sync_all=args.sync_all,
-    )
+        console.print("[dim]Setup incomplete. You can configure playlists from the menu.[/dim]\n")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="likedmusic",
-        description="Sync YouTube Music liked songs to Apple Music",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    dry_run = _parse_args()
+    ensure_dirs()
 
-    # setup subcommand
-    setup_parser = subparsers.add_parser("setup", help="Set up browser auth headers")
-    setup_parser.set_defaults(func=cmd_setup)
+    import likedmusic.actions  # noqa: F401 — triggers action registration
 
-    # config subcommand
-    config_parser = subparsers.add_parser("config", help="Interactive config wizard")
-    config_parser.set_defaults(func=cmd_config)
+    console.print(Panel(BANNER, style="bold cyan", subtitle="LikedMusic"))
 
-    # sync subcommand
-    sync_parser = subparsers.add_parser("sync", help="Sync liked songs")
-    sync_parser.add_argument(
-        "--workers",
-        type=int,
-        default=None,
-        help="Number of download workers (default: from config or 4)",
-    )
-    sync_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview sync actions without downloading or modifying anything",
-    )
-    playlist_group = sync_parser.add_mutually_exclusive_group()
-    playlist_group.add_argument(
-        "--all",
-        action="store_true",
-        dest="sync_all",
-        help="Sync all configured playlists",
-    )
-    playlist_group.add_argument(
-        "--playlist",
-        type=str,
-        default=None,
-        help="Sync a specific playlist by name",
-    )
-    sync_parser.set_defaults(func=cmd_sync, sync_all=False)
+    if dry_run:
+        console.print("[yellow]DRY-RUN MODE — no changes will be made[/yellow]\n")
 
-    args = parser.parse_args()
-    args.func(args)
+    _auto_setup()
+
+    actions = get_actions()
+
+    while True:
+        choices = [
+            questionary.Choice(title=f"{a.name} — {a.description}", value=a)
+            for a in actions
+        ]
+        choices.append(questionary.Choice(title="Quit", value=None))
+
+        selected = questionary.select(
+            "What would you like to do?",
+            choices=choices,
+        ).ask()
+
+        if selected is None:
+            break
+
+        try:
+            selected.handler(dry_run)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Action cancelled.[/yellow]")
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+
+        console.print()
+
+    console.print("Goodbye!")
 
 
 if __name__ == "__main__":

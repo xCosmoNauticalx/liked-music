@@ -3,23 +3,21 @@
 import sys
 
 import questionary
+from questionary import Style
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 from likedmusic import const
+
+CHECKBOX_STYLE = Style([
+    ("pointer", "fg:#00bfff bold"),
+    ("highlighted", "fg:#00bfff"),
+    ("selected", "fg:#cc5454"),
+])
 from likedmusic.config import BACKUP_DIR, BROWSER_AUTH_PATH, MAX_DOWNLOAD_WORKERS
 from likedmusic.playlist_config import PlaylistConfig, save_config
 
 console = Console()
-
-BANNER = r"""
-  _     _ _            _   __  __           _
- | |   (_) | _____  __| | |  \/  |_   _ ___(_) ___
- | |   | | |/ / _ \/ _` | | |\/| | | | / __| |/ __|
- | |___| |   <  __/ (_| | | |  | | |_| \__ \ | (__
- |_____|_|_|\_\___|\__,_| |_|  |_|\__,_|___/_|\___|
-"""
 
 
 def _abort() -> None:
@@ -87,14 +85,8 @@ def _prompt_max_workers() -> int:
 
 
 def _prompt_playlist_selection(library_playlists: list[dict]) -> list[dict]:
-    """Show multi-select checkbox. Returns selected items including liked songs."""
-    liked_choice = questionary.Choice(
-        title="YTM Liked Songs",
-        value={"title": "YTM Liked Songs", "playlistId": None, "source": "liked"},
-        checked=True,
-    )
-
-    playlist_choices = [liked_choice]
+    """Show multi-select checkbox of YTM library playlists."""
+    playlist_choices = []
     for pl in library_playlists:
         title = pl.get("title", "?")
         playlist_choices.append(
@@ -112,6 +104,7 @@ def _prompt_playlist_selection(library_playlists: list[dict]) -> list[dict]:
         questionary.checkbox(
             "Select playlists to sync (space to toggle, enter to confirm):",
             choices=playlist_choices,
+            style=CHECKBOX_STYLE,
             validate=lambda sel: len(sel) > 0 or "Select at least one playlist",
         ).ask()
     )
@@ -126,15 +119,12 @@ def _prompt_apple_music_names(selected: list[dict]) -> list[PlaylistConfig]:
         source = item["source"]
         playlist_id = item.get("playlistId")
 
-        if len(selected) == 1 and source == "liked":
-            apple_name = name
-        else:
-            apple_name = _ask(
-                questionary.text(
-                    f'Apple Music playlist name for "{name}":',
-                    default=name,
-                ).ask()
-            )
+        apple_name = _ask(
+            questionary.text(
+                f'Apple Music playlist name for "{name}":',
+                default=name,
+            ).ask()
+        )
 
         playlists.append(
             PlaylistConfig(
@@ -169,8 +159,6 @@ def _show_summary(playlists: list[PlaylistConfig], max_workers: int) -> bool:
 
 def run_wizard() -> None:
     """Main entry point for the interactive config wizard."""
-    console.print(Panel(BANNER, style="bold cyan", subtitle="Welcome to LikedMusic Setup!"))
-
     if not _ensure_auth():
         return
 
@@ -180,7 +168,7 @@ def run_wizard() -> None:
         library_playlists = _fetch_library_playlists()
     except Exception as e:
         console.print(f"[red]Failed to fetch playlists: {e}[/red]")
-        console.print("Your auth may be expired. Run [bold]likedmusic setup[/bold] to refresh.")
+        console.print("Your auth may be expired. Select [bold]Set up YouTube Music auth[/bold] from the main menu.")
         return
 
     selected = _prompt_playlist_selection(library_playlists)
@@ -195,4 +183,4 @@ def run_wizard() -> None:
     from likedmusic.config import CONFIG_PATH
 
     console.print(f"\n[green]✓ Config saved to {CONFIG_PATH}[/green]")
-    console.print("  Run [bold]likedmusic sync --all[/bold] to start syncing!")
+    console.print("  Select [bold]Sync playlists[/bold] from the main menu to start syncing!")

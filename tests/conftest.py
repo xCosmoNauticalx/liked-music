@@ -6,15 +6,13 @@ import pytest
 
 
 @pytest.fixture()
-def tmp_state_dir(tmp_path):
-    """Provide temporary directories for state and downloads, patching config paths."""
-    state_path = tmp_path / "sync_state.json"
+def tmp_backup_dir(tmp_path):
+    """Provide a temporary backup directory with Backup/ subfolder."""
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    (backup_dir / "Backup").mkdir()
     downloads_dir = tmp_path / "downloads"
     downloads_dir.mkdir()
 
-    with (
-        patch("likedmusic.config.STATE_PATH", state_path),
-        patch("likedmusic.state.STATE_PATH", state_path),
-        patch("likedmusic.config.DOWNLOADS_DIR", downloads_dir),
-    ):
-        yield {"state_path": state_path, "downloads_dir": downloads_dir}
+    with patch("likedmusic.config.DOWNLOADS_DIR", downloads_dir):
+        yield {"backup_dir": backup_dir, "downloads_dir": downloads_dir}

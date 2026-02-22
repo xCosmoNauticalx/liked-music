@@ -1,112 +1,147 @@
-"""Sync state persistence using JSON."""
+"""Per-playlist sync state persistence with checksum integrity."""
 
+import hashlib
 import json
+import logging
+import re
+import shutil
 import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 
-from likedmusic import config, const
+from likedmusic import const
+
+logger = logging.getLogger(__name__)
 
 
-def load_state() -> dict:
-    """Load sync state from disk.
-    
-    Reads the state file from the configured STATE_PATH and parses it as JSON.
-    If the file doesn't exist, returns a default empty state structure with
-    initialized keys for synced songs, last sync timestamp, and playlist order.
-    
-    Returns:
-        dict: A dictionary containing the sync state with the following keys:
-            - synced_songs: Dictionary mapping video IDs to song metadata
-            - last_sync: ISO format timestamp of the last sync, or None
-            - playlist_order: List of video IDs representing playlist order
-    """
-    if config.STATE_PATH.exists():
-        return json.loads(config.STATE_PATH.read_text())
+def _sanitize_state_filename(playlist_name: str) -> str:
+    """Convert a playlist name to a safe filename (no extension)."""
+    return re.sub(r'[<>:"/\\|?*\s]+', "_", playlist_name).strip("_")
+
+
+def _state_path(backup_dir: Path, playlist_name: str) -> Path:
+    """Return path to a playlist's state file."""
+    return backup_dir / f"{_sanitize_state_filename(playlist_name)}.json"
+
+
+def _compute_checksum(payload: dict) -> str:
+    """SHA256 of deterministic JSON serialization."""
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _verify_checksum(data: dict) -> bool:
+    """Verify the checksum field matches the rest of the data."""
+    stored = data.get(const.CHECKSUM_KEY)
+    if not stored:
+        return False
+    payload = {k: v for k, v in data.items() if k != const.CHECKSUM_KEY}
+    return _compute_checksum(payload) == stored
+
+
+def _default_playlist_state(playlist_name: str) -> dict:
+    """Return an empty default state for a playlist."""
     return {
-        const.SYNCED_SONGS_KEY: {},
+        const.PLAYLIST_NAME_KEY: playlist_name,
         const.LAST_SYNC_KEY: None,
         const.PLAYLIST_ORDER_KEY: [],
+        const.SYNCED_SONGS_KEY: {},
     }
 
 
-def save_state(state: dict) -> None:
-    """Atomically write state to disk using a temporary file and rename operation.
-    
-    This function persists the sync state to disk in a safe, atomic manner by first
-    writing to a temporary file and then renaming it to the final destination. This
-    approach ensures that the state file is never left in a partially written state.
-    The function also updates the last_sync timestamp before saving.
-    
-    Args:
-        state (dict): The state dictionary to persist. Should contain keys like
-            synced_songs, playlist_order, and other sync-related data. The
-            last_sync timestamp will be automatically updated to the current UTC time.
-    
-    Raises:
-        Exception: Any exception that occurs during file writing or renaming is
-            re-raised after attempting to clean up the temporary file.
-    """
-    state[const.LAST_SYNC_KEY] = datetime.now(timezone.utc).isoformat()
-    config.STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+def load_playlist_state(backup_dir: Path, playlist_name: str) -> dict:
+    """Load per-playlist state. Falls back to .bak if main file is corrupt."""
+    path = _state_path(backup_dir, playlist_name)
 
-    # Write to temp file then rename for atomicity
-    fd, tmp_path = tempfile.mkstemp(
-        dir=config.STATE_PATH.parent,
-        suffix=".tmp",
-    )
+    for candidate in [path, path.with_suffix(".json.bak")]:
+        try:
+            data = json.loads(candidate.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+        if _verify_checksum(data):
+            payload = {k: v for k, v in data.items() if k != const.CHECKSUM_KEY}
+            return payload
+        logger.warning("Checksum mismatch in %s, trying backup", candidate)
+
+    return _default_playlist_state(playlist_name)
+
+
+def save_playlist_state(backup_dir: Path, playlist_name: str, playlist_state: dict) -> None:
+    """Atomic-write playlist state with checksum. Copies current file to .bak first."""
+    path = _state_path(backup_dir, playlist_name)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    playlist_state[const.LAST_SYNC_KEY] = datetime.now(timezone.utc).isoformat()
+    playlist_state[const.PLAYLIST_NAME_KEY] = playlist_name
+
+    checksum = _compute_checksum(playlist_state)
+    data_with_checksum = {const.CHECKSUM_KEY: checksum, **playlist_state}
+
+    # Copy current to .bak before overwriting
+    if path.exists():
+        shutil.copy2(path, path.with_suffix(".json.bak"))
+
+    _, tmp_path = tempfile.mkstemp(dir=backup_dir, suffix=".tmp")
     tmp = Path(tmp_path)
     try:
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.rename(config.STATE_PATH)
+        tmp.write_text(json.dumps(data_with_checksum, indent=2))
+        tmp.rename(path)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
 
 
+def load_all_synced_ids(backup_dir: Path) -> set[str]:
+    """Scan all playlist .json files and return union of synced video IDs."""
+    ids: set[str] = set()
+    try:
+        json_files = list(backup_dir.glob("*.json"))
+    except FileNotFoundError:
+        return ids
+
+    for path in json_files:
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not _verify_checksum(data):
+            logger.warning("Skipping %s: checksum mismatch", path.name)
+            continue
+        ids.update(data.get(const.SYNCED_SONGS_KEY, {}).keys())
+
+    return ids
+
+
+def load_all_synced_songs(backup_dir: Path) -> dict[str, dict]:
+    """Scan all playlist .json files and merge synced_songs dicts."""
+    merged: dict[str, dict] = {}
+    try:
+        json_files = list(backup_dir.glob("*.json"))
+    except FileNotFoundError:
+        return merged
+
+    for path in json_files:
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not _verify_checksum(data):
+            continue
+        merged.update(data.get(const.SYNCED_SONGS_KEY, {}))
+
+    return merged
+
+
+# --- Pure dict helpers (work on a single playlist state dict) ---
+
+
 def get_synced_video_ids(state: dict) -> set[str]:
-    """Extract the set of video IDs that have already been synced.
-    
-    This function retrieves all video IDs from the synced_songs dictionary in the
-    state and returns them as a set. This is useful for quickly checking which
-    songs have already been downloaded and processed during previous sync operations.
-    
-    Args:
-        state (dict): The sync state dictionary containing synced song information.
-            Expected to have a 'synced_songs' key with a dictionary mapping video
-            IDs to their metadata. If the key is missing, an empty dictionary is
-            assumed.
-    
-    Returns:
-        set[str]: A set of video ID strings representing all songs that have been
-            previously synced. Returns an empty set if no songs have been synced yet.
-    """
+    """Extract synced video IDs from a playlist state dict."""
     return set(state.get(const.SYNCED_SONGS_KEY, {}).keys())
 
 
 def mark_synced(state: dict, video_id: str, title: str, artist: str, file_path: str) -> None:
-    """Mark a song as synced in the state by recording its metadata.
-    
-    This function updates the sync state to record that a particular song has been
-    successfully downloaded and processed. It stores the song's metadata including
-    title, artist, file location, and the timestamp when it was synced. This information
-    is used to track which songs have already been synced and avoid re-downloading them
-    in subsequent sync operations.
-    
-    Args:
-        state (dict): The sync state dictionary to update. This dictionary will be
-            modified in-place to include the new synced song information.
-        video_id (str): The unique YouTube Music video ID for the song. This serves
-            as the key for storing and retrieving the song's sync information.
-        title (str): The title of the song as retrieved from YouTube Music.
-        artist (str): The artist name for the song as retrieved from YouTube Music.
-        file_path (str): The local file system path where the downloaded song file
-            is stored.
-    
-    Returns:
-        None: This function modifies the state dictionary in-place and does not
-            return a value.
-    """
+    """Record a song as synced in the playlist state dict."""
     state.setdefault(const.SYNCED_SONGS_KEY, {})[video_id] = {
         const.TITLE_KEY: title,
         const.ARTIST_KEY: artist,
@@ -115,28 +150,63 @@ def mark_synced(state: dict, video_id: str, title: str, artist: str, file_path: 
     }
 
 
-def get_playlist_order(state: dict, playlist_name: str) -> list[str]:
-    """Get the stored order for a specific playlist.
+def get_playlist_order(state: dict) -> list[str]:
+    """Get the stored playlist order from a per-playlist state dict."""
+    return state.get(const.PLAYLIST_ORDER_KEY, [])
 
-    Falls back to top-level 'playlist_order' for backward compat with older
-    state files that only tracked liked songs.
+
+def update_playlist_order(state: dict, video_ids: list[str]) -> None:
+    """Set the playlist order in a per-playlist state dict."""
+    state[const.PLAYLIST_ORDER_KEY] = video_ids
+
+
+# --- Migration ---
+
+
+def migrate_global_state(legacy_path: Path, backup_dir: Path, playlists: list) -> None:
+    """Migrate legacy global sync_state.json to per-playlist .json files.
+
+    Splits the global state into per-playlist state files based on playlist_orders.
+    Songs not assigned to any playlist go into the first playlist's state.
+    Renames the legacy file to .migrated after successful migration.
     """
-    orders = state.get(const.PLAYLIST_ORDERS_KEY, {})
-    if playlist_name in orders:
-        return orders[playlist_name]
-    if playlist_name == "YTM Liked Songs":
-        return state.get(const.PLAYLIST_ORDER_KEY, [])
-    return []
+    try:
+        global_state = json.loads(legacy_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
 
+    all_synced = global_state.get(const.SYNCED_SONGS_KEY, {})
+    playlist_orders = global_state.get("playlist_orders", {})
+    top_level_order = global_state.get(const.PLAYLIST_ORDER_KEY, [])
 
-def update_playlist_order(state: dict, video_ids: list[str], playlist_name: str | None = None) -> None:
-    """Store the current playlist order (list of video IDs).
+    assigned_ids: set[str] = set()
 
-    When playlist_name is given, stores in playlist_orders dict.
-    Also updates top-level playlist_order for backward compat when
-    playlist_name is None or "YTM Liked Songs".
-    """
-    if playlist_name:
-        state.setdefault(const.PLAYLIST_ORDERS_KEY, {})[playlist_name] = video_ids
-    if not playlist_name or playlist_name == "YTM Liked Songs":
-        state[const.PLAYLIST_ORDER_KEY] = video_ids
+    for pl in playlists:
+        order = playlist_orders.get(pl.name, [])
+        if not order and pl.name == "YTM Liked Songs":
+            order = top_level_order
+
+        songs_for_playlist = {
+            vid: all_synced[vid]
+            for vid in order
+            if vid in all_synced
+        }
+        assigned_ids.update(songs_for_playlist.keys())
+
+        pl_state = {
+            const.PLAYLIST_NAME_KEY: pl.name,
+            const.LAST_SYNC_KEY: global_state.get(const.LAST_SYNC_KEY),
+            const.PLAYLIST_ORDER_KEY: order,
+            const.SYNCED_SONGS_KEY: songs_for_playlist,
+        }
+        save_playlist_state(backup_dir, pl.name, pl_state)
+
+    # Assign remaining songs to the first playlist
+    unassigned = {vid: all_synced[vid] for vid in all_synced if vid not in assigned_ids}
+    if unassigned and playlists:
+        first_state = load_playlist_state(backup_dir, playlists[0].name)
+        first_state.setdefault(const.SYNCED_SONGS_KEY, {}).update(unassigned)
+        save_playlist_state(backup_dir, playlists[0].name, first_state)
+
+    legacy_path.rename(legacy_path.with_suffix(".json.migrated"))
+    print(f"Migrated legacy state to per-playlist files in {backup_dir}")

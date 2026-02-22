@@ -5,11 +5,14 @@ from pathlib import Path
 DATA_DIR = Path.home() / ".likedmusic"
 BROWSER_AUTH_PATH = DATA_DIR / "browser.json"
 CONFIG_PATH = DATA_DIR / "config.yml"
-STATE_PATH = DATA_DIR / "sync_state.json"
+LEGACY_STATE_PATH = DATA_DIR / "sync_state.json"
 DOWNLOADS_DIR = DATA_DIR / "downloads"
 BACKUP_DIR = Path.home() / "Music" / "LikedMusic-Backup"
 PLAYLIST_NAME = "YTM Liked Songs"
 MAX_DOWNLOAD_WORKERS = 4
+
+
+AUDIO_BACKUP_SUBDIR = "Backup"
 
 
 def ensure_dirs():
@@ -17,3 +20,4 @@ def ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    (BACKUP_DIR / AUDIO_BACKUP_SUBDIR).mkdir(parents=True, exist_ok=True)
