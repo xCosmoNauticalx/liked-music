@@ -1,17 +1,32 @@
 """Download songs from YouTube Music via yt-dlp."""
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-
 import yt_dlp
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def download_song(video_id: str, output_dir: Path, max_retries: int = 3) -> Path:
-    """Download a single song as M4A. Returns path to downloaded file.
+    """Download a single song from YouTube Music as an M4A audio file.
 
-    Retries up to max_retries times with exponential backoff.
-    Skips download if file already exists.
+    This function downloads the best available audio from YouTube Music for the given
+    video ID and converts it to M4A format using FFmpeg. If the file already exists,
+    the download is skipped. The function implements exponential backoff retry logic
+    to handle transient failures.
+
+    Args:
+        video_id: The YouTube Music video identifier for the song to download.
+        output_dir: The directory path where the downloaded M4A file will be saved.
+        max_retries: The maximum number of download attempts before raising an error.
+                    Defaults to 3. Uses exponential backoff (1s, 2s, 4s) between retries.
+
+    Returns:
+        Path: The file system path to the downloaded M4A file.
+
+    Raises:
+        RuntimeError: If the download fails after all retry attempts have been exhausted.
+                     The error message includes the video ID, number of attempts, and
+                     the last encountered error.
     """
     output_path = output_dir / f"{video_id}.m4a"
     if output_path.exists():

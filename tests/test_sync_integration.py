@@ -3,7 +3,13 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from likedmusic.playlist_config import PlaylistConfig
 from likedmusic.sync_engine import run_sync
+
+_DEFAULT_PLAYLISTS = [
+    PlaylistConfig(name="YTM Liked Songs", source="liked", apple_music_playlist="YTM Liked Songs")
+]
+_DEFAULT_BACKUP_DIR = Path("/tmp/backup")
 
 FAKE_SONGS = [
     {
@@ -36,6 +42,10 @@ def _base_patches():
         "add_tracks_to_playlist": patch("likedmusic.sync_engine.apple_music.add_tracks_to_playlist"),
         "reorder_playlist": patch("likedmusic.sync_engine.apple_music.reorder_playlist"),
         "backup_file": patch("likedmusic.sync_engine._backup_file"),
+        "load_config": patch(
+            "likedmusic.sync_engine.load_config",
+            return_value=(_DEFAULT_PLAYLISTS, _DEFAULT_BACKUP_DIR, 4),
+        ),
     }
 
 
@@ -44,6 +54,7 @@ class TestSyncHappyPath:
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
+            patches["load_config"],
             patches["load_state"] as mock_load,
             patches["save_state"] as mock_save,
             patches["fetch_liked_songs"] as mock_fetch,
@@ -73,6 +84,7 @@ class TestSyncHappyPath:
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
+            patches["load_config"],
             patches["load_state"] as mock_load,
             patches["save_state"],
             patches["fetch_liked_songs"] as mock_fetch,
@@ -102,6 +114,7 @@ class TestSyncHappyPath:
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
+            patches["load_config"],
             patches["load_state"] as mock_load,
             patches["save_state"],
             patches["fetch_liked_songs"] as mock_fetch,
@@ -131,6 +144,7 @@ class TestSyncHappyPath:
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
+            patches["load_config"],
             patches["load_state"] as mock_load,
             patches["save_state"] as mock_save,
             patches["fetch_liked_songs"] as mock_fetch,
@@ -147,7 +161,8 @@ class TestSyncHappyPath:
             run_sync()
 
             mock_dl.assert_not_called()
-            mock_save.assert_not_called()
+            # save_state is called once at end of run_sync (final state persist)
+            mock_save.assert_called_once()
 
 
 class TestDryRun:
@@ -155,6 +170,7 @@ class TestDryRun:
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
+            patches["load_config"],
             patches["load_state"] as mock_load,
             patches["save_state"],
             patches["fetch_liked_songs"] as mock_fetch,
@@ -176,6 +192,7 @@ class TestDryRun:
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
+            patches["load_config"],
             patches["load_state"] as mock_load,
             patches["save_state"],
             patches["fetch_liked_songs"] as mock_fetch,
@@ -198,6 +215,7 @@ class TestDryRun:
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
+            patches["load_config"],
             patches["load_state"] as mock_load,
             patches["save_state"] as mock_save,
             patches["fetch_liked_songs"] as mock_fetch,
@@ -219,6 +237,7 @@ class TestDryRun:
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
+            patches["load_config"],
             patches["load_state"] as mock_load,
             patches["save_state"],
             patches["fetch_liked_songs"] as mock_fetch,
@@ -244,6 +263,7 @@ class TestDryRun:
         patches = _base_patches()
         with (
             patches["ensure_dirs"],
+            patches["load_config"],
             patches["load_state"] as mock_load,
             patches["save_state"],
             patches["fetch_liked_songs"] as mock_fetch,

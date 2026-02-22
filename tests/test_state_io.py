@@ -14,14 +14,14 @@ class TestLoadState:
         data = {"synced_songs": {"vid1": {}}, "last_sync": None, "playlist_order": []}
         state_path.write_text(json.dumps(data))
 
-        with patch("likedmusic.state.STATE_PATH", state_path):
+        with patch("likedmusic.state.config.STATE_PATH", state_path):
             result = load_state()
 
         assert result == data
 
     def test_file_missing_returns_default(self, tmp_path):
         state_path = tmp_path / "nonexistent.json"
-        with patch("likedmusic.state.STATE_PATH", state_path):
+        with patch("likedmusic.state.config.STATE_PATH", state_path):
             result = load_state()
 
         assert result == {
@@ -34,7 +34,7 @@ class TestLoadState:
         state_path = tmp_path / "sync_state.json"
         state_path.write_text("{not valid json")
 
-        with patch("likedmusic.state.STATE_PATH", state_path):
+        with patch("likedmusic.state.config.STATE_PATH", state_path):
             with pytest.raises(json.JSONDecodeError):
                 load_state()
 
@@ -44,7 +44,7 @@ class TestSaveState:
         state_path = tmp_path / "sync_state.json"
         data = {"synced_songs": {}, "playlist_order": []}
 
-        with patch("likedmusic.state.STATE_PATH", state_path):
+        with patch("likedmusic.state.config.STATE_PATH", state_path):
             save_state(data)
 
         assert state_path.exists()
@@ -57,7 +57,7 @@ class TestSaveState:
         state_path.write_text(json.dumps({"old": True}))
 
         data = {"synced_songs": {"new": {}}, "playlist_order": []}
-        with patch("likedmusic.state.STATE_PATH", state_path):
+        with patch("likedmusic.state.config.STATE_PATH", state_path):
             save_state(data)
 
         saved = json.loads(state_path.read_text())
