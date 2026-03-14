@@ -16,6 +16,7 @@ dependencies = [
     "pyyaml",
     "questionary>=2.0.0",
     "rich>=13.0.0",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +24,7 @@ dev = ["pytest"]
 
 [project.scripts]
 likedmusic = "likedmusic.cli:main"
+likedmusic-mcp = "likedmusic.mcp_server:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

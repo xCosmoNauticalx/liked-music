@@ -83,8 +83,11 @@ def _download_new_songs(
     apple_music_added: bool = True,
 ) -> dict[str, Path]:
     """Download new songs, embed metadata, create backups, update playlist state."""
+    from likedmusic.dashboard import DownloadDashboard
+
     print(f"\nDownloading {len(new_songs)} new song(s)...")
-    downloaded = downloader.download_songs(new_songs, DOWNLOADS_DIR, max_workers)
+    with DownloadDashboard(total=len(new_songs)) as dashboard:
+        downloaded = downloader.download_songs(new_songs, DOWNLOADS_DIR, max_workers, dashboard=dashboard)
 
     for song in new_songs:
         video_id = song[const.VIDEO_ID_KEY]
@@ -116,6 +119,7 @@ def sync_playlist(
     max_workers: int,
     dry_run: bool,
     download_only: bool = False,
+    headless: bool = False,
 ) -> None:
     """Synchronize a single playlist from YouTube Music to Apple Music."""
     # Load this playlist's state and cross-playlist data
@@ -177,6 +181,8 @@ def sync_playlist(
         try:
             apple_music.ensure_playlist(playlist_name)
         except Exception:
+            if headless:
+                raise
             if input(f'Create Apple Music playlist "{playlist_name}"? [y/N] ').lower() == "y":
                 apple_music.ensure_playlist(playlist_name)
             else:
@@ -247,6 +253,7 @@ def run_sync(
     playlist_name: str | None = None,
     sync_all: bool = False,
     download_only: bool = False,
+    headless: bool = False,
 ) -> None:
     """Run the sync pipeline for one or more playlists."""
     ensure_dirs()
@@ -274,7 +281,7 @@ def run_sync(
     try:
         for cfg in targets:
             print(f"\n--- Syncing: {cfg.name} ---")
-            sync_playlist(cfg, backup_dir, playlists, max_workers, dry_run, download_only=download_only)
+            sync_playlist(cfg, backup_dir, playlists, max_workers, dry_run, download_only=download_only, headless=headless)
     except KeyboardInterrupt:
         print("\nSync stopped.")
         return
