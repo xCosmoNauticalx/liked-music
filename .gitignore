@@ -21,3 +21,8 @@ sync_state.json
 
 # OS
 .DS_Store
+
+# AI agent tooling
+.claude/
+agent-os/
+CLAUDE.md

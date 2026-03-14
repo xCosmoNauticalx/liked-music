@@ -1,9 +1,0 @@
-root:
-  documentation:
-    description: Code comments should explain reasoning and purpose, not restate what the code does
-  error-handling:
-    description: Error handling approach using Ask for Forgiveness (EAFP) pattern
-  general:
-    description: Prefer break over continue, keep code simple and avoid over-engineering
-  virtual-env:
-    description: Source the project's .venv before running any commands
