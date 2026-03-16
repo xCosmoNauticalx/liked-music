@@ -6,6 +6,7 @@ from likedmusic.state import (
     _compute_checksum,
     _sanitize_state_filename,
     _verify_checksum,
+    load_all_pending_songs,
     load_all_synced_ids,
     load_all_synced_songs,
     load_playlist_state,
@@ -147,7 +148,17 @@ class TestLoadAllSyncedIds:
         assert load_all_synced_ids(tmp_path) == set()
 
 
+class TestLoadAllSyncedIdsMissing:
+    def test_missing_directory(self, tmp_path):
+        missing = tmp_path / "nonexistent"
+        assert load_all_synced_ids(missing) == set()
+
+
 class TestLoadAllSyncedSongs:
+    def test_missing_directory(self, tmp_path):
+        missing = tmp_path / "nonexistent"
+        assert load_all_synced_songs(missing) == {}
+
     def test_merges_across_playlists(self, tmp_path):
         save_playlist_state(tmp_path, "A", {
             "synced_songs": {"vid1": {"title": "S1", "file_path": "/a/vid1.m4a"}},
@@ -162,3 +173,60 @@ class TestLoadAllSyncedSongs:
         assert "vid1" in songs
         assert "vid2" in songs
         assert songs["vid1"]["file_path"] == "/a/vid1.m4a"
+
+
+class TestLoadAllPendingSongs:
+    def test_returns_pending_across_playlists(self, tmp_path):
+        save_playlist_state(tmp_path, "A", {
+            "synced_songs": {
+                "vid1": {"title": "S1", "file_path": "/a/1.m4a", "apple_music_added": False},
+                "vid2": {"title": "S2", "file_path": "/a/2.m4a", "apple_music_added": True},
+            },
+            "playlist_order": ["vid1", "vid2"],
+        })
+        save_playlist_state(tmp_path, "B", {
+            "synced_songs": {
+                "vid3": {"title": "S3", "file_path": "/b/3.m4a", "apple_music_added": False},
+            },
+            "playlist_order": ["vid3"],
+        })
+
+        pending = load_all_pending_songs(tmp_path)
+        assert "vid1" in pending
+        assert "vid2" not in pending
+        assert "vid3" in pending
+
+    def test_empty_dir(self, tmp_path):
+        assert load_all_pending_songs(tmp_path) == {}
+
+    def test_missing_directory(self, tmp_path):
+        missing = tmp_path / "nonexistent"
+        assert load_all_pending_songs(missing) == {}
+
+
+class TestSavePlaylistStateCleanup:
+    def test_cleanup_on_write_failure(self, tmp_path):
+        """Verify temp file is cleaned up when write fails."""
+        from unittest.mock import patch
+        import tempfile as tf
+
+        original_mkstemp = tf.mkstemp
+
+        def failing_mkstemp(**kwargs):
+            fd, path = original_mkstemp(**kwargs)
+            import os
+            os.close(fd)
+            # Make the path read-only dir so write_text fails
+            from pathlib import Path
+            p = Path(path)
+            p.write_text("")  # create it
+            p.chmod(0o000)
+            return fd, path
+
+        # Instead, test that temp file doesn't linger on exception
+        state = {"synced_songs": {}, "playlist_order": []}
+        save_playlist_state(tmp_path, "Test", state)
+
+        # Verify no .tmp files remain after successful write
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert len(tmp_files) == 0

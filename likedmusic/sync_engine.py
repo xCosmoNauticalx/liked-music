@@ -1,9 +1,12 @@
 """Sync orchestration — coordinates fetching, downloading, and playlist management."""
 
+import logging
 import re
 import shutil
 from typing import List
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from likedmusic import apple_music, downloader, metadata, state, ytmusic, const
 from likedmusic.config import AUDIO_BACKUP_SUBDIR, DOWNLOADS_DIR, LEGACY_STATE_PATH, ensure_dirs
@@ -36,7 +39,7 @@ def _fetch_tracks(playlist_cfg: PlaylistConfig, all_playlists, backup_dir):
         print(f"Resolving playlist ID for '{playlist_cfg.source}'...")
         playlist_cfg.playlist_id = ytmusic.resolve_playlist_id(playlist_cfg.source)
         save_config(all_playlists, backup_dir)
-        print(f"Cached playlist ID: {playlist_cfg.playlist_id}")
+        logger.debug("Cached playlist ID: %s", playlist_cfg.playlist_id)
 
     print(f"Fetching tracks from '{playlist_cfg.source}'...")
     return ytmusic.fetch_playlist_songs(playlist_cfg.playlist_id)
@@ -103,7 +106,7 @@ def _download_new_songs(
         album = album_info.get(const.NAME_KEY) if album_info and isinstance(album_info, dict) else None
         thumbnail_url = metadata.get_best_thumbnail_url(song.get("thumbnails"))
 
-        print(f"  Tagging: {artist} - {title}")
+        logger.debug("Tagging: %s - %s", artist, title)
         metadata.embed_metadata(file_path, title, artist, album, thumbnail_url)
         _backup_file(file_path, title, artist, video_id, audio_backup_dir)
         state.mark_synced(playlist_state, video_id, title, artist, str(file_path), apple_music_added=apple_music_added)

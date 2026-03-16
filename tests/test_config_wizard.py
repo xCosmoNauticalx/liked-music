@@ -129,3 +129,37 @@ class TestRunWizard:
             mock_q.confirm.return_value.ask.return_value = False
             run_wizard()
             mock_save.assert_not_called()
+
+    def test_user_declines_summary(self, tmp_path):
+        browser_path = tmp_path / "browser.json"
+        browser_path.write_text("{}")
+        liked = {"title": "Liked", "playlistId": None, "source": "liked"}
+
+        with (
+            patch("likedmusic.config_wizard.BROWSER_AUTH_PATH", browser_path),
+            patch("likedmusic.config_wizard.questionary") as mock_q,
+            patch("likedmusic.config_wizard._fetch_library_playlists", return_value=[{"title": "Liked"}]),
+            patch("likedmusic.config_wizard.save_config") as mock_save,
+        ):
+            mock_q.Choice = MagicMock(side_effect=lambda **kwargs: kwargs.get("value"))
+            mock_q.checkbox.return_value.ask.return_value = [liked]
+            mock_q.text.return_value.ask.return_value = "Liked"
+            mock_q.confirm.return_value.ask.return_value = False
+
+            run_wizard()
+            mock_save.assert_not_called()
+
+
+class TestEnsureAuthSetupFails:
+    def test_setup_succeeds_but_file_not_created(self, tmp_path):
+        """setup_ytmusic_browser runs but doesn't create the file -> returns False."""
+        browser_path = tmp_path / "browser.json"
+
+        with (
+            patch("likedmusic.config_wizard.BROWSER_AUTH_PATH", browser_path),
+            patch("likedmusic.config_wizard.questionary") as mock_q,
+            patch("likedmusic.ytmusic.setup_ytmusic_browser"),  # no-op, file not created
+        ):
+            mock_q.confirm.return_value.ask.return_value = True
+            result = _ensure_auth()
+            assert result is False

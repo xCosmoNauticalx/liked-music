@@ -61,6 +61,8 @@ def _auto_setup() -> None:
 
 
 def main() -> None:
+    from likedmusic.logging_config import setup_logging
+    setup_logging()
     dry_run = _parse_args()
     ensure_dirs()
 

@@ -6,8 +6,8 @@ DATA_DIR = Path.home() / ".likedmusic"
 BROWSER_AUTH_PATH = DATA_DIR / "browser.json"
 CONFIG_PATH = DATA_DIR / "config.yml"
 LEGACY_STATE_PATH = DATA_DIR / "sync_state.json"
-DOWNLOADS_DIR = DATA_DIR / "downloads"
-BACKUP_DIR = Path.home() / "Music" / "LikedMusic-Backup"
+DOWNLOADS_DIR = Path.home() / "Music" / "LikedMusic" / "Downloads"
+BACKUP_DIR = Path.home() / "Music" / "LikedMusic"
 PLAYLIST_NAME = "YTM Liked Songs"
 MAX_DOWNLOAD_WORKERS = 4
 

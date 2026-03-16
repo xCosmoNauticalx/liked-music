@@ -1,5 +1,6 @@
 """Tests for individual action modules."""
 
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -148,6 +149,97 @@ class TestSyncAction:
             from likedmusic.actions.sync import _handle
             _handle(dry_run=False)
             mock_sync.assert_not_called()
+
+
+class TestRelativeTime:
+    def test_none_returns_never(self):
+        from likedmusic.actions.sync import _relative_time
+        assert _relative_time(None) == "never"
+
+    def test_empty_string_returns_never(self):
+        from likedmusic.actions.sync import _relative_time
+        assert _relative_time("") == "never"
+
+    def test_invalid_string_returns_as_is(self):
+        from likedmusic.actions.sync import _relative_time
+        assert _relative_time("not-a-date") == "not-a-date"
+
+    def test_just_now(self):
+        from likedmusic.actions.sync import _relative_time
+        now = datetime.now(timezone.utc).isoformat()
+        result = _relative_time(now)
+        assert result in ("just now", "0h ago")
+
+    def test_hours_ago(self):
+        from likedmusic.actions.sync import _relative_time
+        ts = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        assert _relative_time(ts) == "3h ago"
+
+    def test_yesterday(self):
+        from likedmusic.actions.sync import _relative_time
+        ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        assert _relative_time(ts) == "yesterday"
+
+    def test_days_ago(self):
+        from likedmusic.actions.sync import _relative_time
+        ts = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        assert _relative_time(ts) == "5d ago"
+
+    def test_months_ago(self):
+        from likedmusic.actions.sync import _relative_time
+        ts = (datetime.now(timezone.utc) - timedelta(days=65)).isoformat()
+        assert _relative_time(ts) == "2mo ago"
+
+
+class TestFetchAllStats:
+    def _make_playlists(self):
+        from likedmusic.playlist_config import PlaylistConfig
+        return [
+            PlaylistConfig(name="Liked", source="liked", apple_music_playlist="Liked"),
+        ]
+
+    def test_returns_stats_for_playlists(self):
+        from likedmusic.actions.sync import _fetch_all_stats
+        playlists = self._make_playlists()
+
+        tracks = [{"videoId": "vid1", "title": "Song1"}, {"videoId": "vid2", "title": "Song2"}]
+
+        with (
+            patch("likedmusic.state.load_all_synced_ids", return_value={"vid1"}),
+            patch("likedmusic.state.load_playlist_state", return_value={
+                "synced_songs": {"vid1": {"apple_music_added": False}},
+                "last_sync": "2026-01-01T00:00:00+00:00",
+            }),
+            patch("likedmusic.state.get_pending_songs", return_value={"vid1": {}}),
+            patch("likedmusic.sync_engine._fetch_tracks", return_value=tracks),
+            patch("likedmusic.actions.sync.console"),
+        ):
+            results = _fetch_all_stats(playlists, Path("/tmp/backup"))
+
+        assert len(results) == 1
+        assert results[0]["new_count"] == 1  # vid2 is new
+        assert results[0]["pending_count"] == 1
+        assert results[0]["tracks"] == tracks
+
+    def test_handles_fetch_exception(self):
+        from likedmusic.actions.sync import _fetch_all_stats
+        playlists = self._make_playlists()
+
+        with (
+            patch("likedmusic.state.load_all_synced_ids", return_value=set()),
+            patch("likedmusic.state.load_playlist_state", return_value={
+                "synced_songs": {},
+                "last_sync": None,
+            }),
+            patch("likedmusic.state.get_pending_songs", return_value={}),
+            patch("likedmusic.sync_engine._fetch_tracks", side_effect=Exception("network error")),
+            patch("likedmusic.actions.sync.console"),
+        ):
+            results = _fetch_all_stats(playlists, Path("/tmp/backup"))
+
+        assert len(results) == 1
+        assert results[0]["tracks"] == []
+        assert results[0]["new_count"] == 0
 
 
 class TestConfigureAction:

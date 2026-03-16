@@ -226,6 +226,8 @@ async def sync_playlist_download_only(playlist_name: str | None = None) -> dict:
 
 def main():
     """Entry point for the likedmusic-mcp command."""
+    from likedmusic.logging_config import setup_logging
+    setup_logging()
     mcp.run(transport="stdio")
 
 

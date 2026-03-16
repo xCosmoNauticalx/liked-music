@@ -12,12 +12,15 @@ extraction. Firefox and Safari cookies are accessible without a password prompt.
 """
 
 import json
+import logging
 import time
 import hashlib
 from ytmusicapi import YTMusic, setup
 
 from likedmusic import const
 from likedmusic.config import BROWSER_AUTH_PATH
+
+logger = logging.getLogger(__name__)
 
 
 # ytmusicapi 1.11+ reads __Secure-3PAPISID to compute SAPISIDHASH on each request.
@@ -71,7 +74,7 @@ def _compute_sapisidhash(sapisid: str) -> str:
     return f"SAPISIDHASH {timestamp}_{sha1.hexdigest()}"
 
 
-def _save_browser_json(cookie_dict: dict) -> None:
+def _save_browser_json(cookie_dict: dict, browser_name: str | None = None) -> None:
     """Write browser.json in the format ytmusicapi 1.11+ expects.
 
     ytmusicapi detects browser-auth by checking that the ``authorization``
@@ -83,6 +86,9 @@ def _save_browser_json(cookie_dict: dict) -> None:
     Args:
         cookie_dict: Mapping of cookie name → value, already filtered to the
                      youtube.com domain.
+        browser_name: Name of the browser cookies were extracted from (e.g.
+                      "chrome", "firefox"). Stored in browser.json so the
+                      downloader can use yt-dlp's cookiesfrombrowser option.
     """
     cookie_str = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
     # Prefer __Secure-3PAPISID (required by ytmusicapi 1.11+); fall back to SAPISID.
@@ -106,6 +112,9 @@ def _save_browser_json(cookie_dict: dict) -> None:
         "x-origin": _YTM_ORIGIN,
         "cookie": cookie_str,
     }
+    if browser_name:
+        headers["_browser"] = browser_name
+    BROWSER_AUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
     BROWSER_AUTH_PATH.write_text(json.dumps(headers, indent=4))
 
 
@@ -151,14 +160,15 @@ def _try_auto_setup() -> bool:
         try:
             # Restrict to youtube.com cookies so we don't handle a huge jar.
             cookies = fn(["youtube.com"])
-        except Exception:
+        except Exception as e:
             # Browser not installed, locked, or decryption failed — try next.
+            logger.debug("Browser %s unavailable: %s", name, e)
             cookies = []
 
         cookie_dict = {c[const.NAME_KEY]: c[const.VALUE_KEY] for c in cookies}
 
         if _has_required_cookies(cookie_dict):
-            _save_browser_json(cookie_dict)
+            _save_browser_json(cookie_dict, browser_name=name)
             print(f"Auto-extracted YouTube Music cookies from {name}.")
             print(f"Saved to {BROWSER_AUTH_PATH}")
             return True

@@ -5,6 +5,7 @@ from datetime import datetime
 from likedmusic.state import (
     get_playlist_order,
     get_synced_video_ids,
+    mark_apple_music_added,
     mark_synced,
     update_playlist_order,
 )
@@ -69,3 +70,29 @@ class TestGetPlaylistOrder:
     def test_missing_key_returns_empty(self):
         state = {"synced_songs": {}}
         assert get_playlist_order(state) == []
+
+
+class TestMarkAppleMusicAdded:
+    def test_sets_flag_to_true(self):
+        state = {
+            "synced_songs": {
+                "vid1": {
+                    "title": "Song",
+                    "artist": "Artist",
+                    "file_path": "/path",
+                    "synced_at": "2026-01-01T00:00:00",
+                    "apple_music_added": False,
+                },
+            },
+        }
+        mark_apple_music_added(state, "vid1")
+        assert state["synced_songs"]["vid1"]["apple_music_added"] is True
+
+    def test_overwrites_existing_true(self):
+        state = {
+            "synced_songs": {
+                "vid1": {"apple_music_added": True},
+            },
+        }
+        mark_apple_music_added(state, "vid1")
+        assert state["synced_songs"]["vid1"]["apple_music_added"] is True

@@ -227,3 +227,51 @@ def test_fetch_playlist_songs():
     assert len(tracks) == 1
     assert tracks[0]["videoId"] == "abc"
     mock_ytm.get_playlist.assert_called_once_with("PL_test", limit=5000)
+
+
+# ---------------------------------------------------------------------------
+# _get_ytm_client — error path
+# ---------------------------------------------------------------------------
+
+
+def test_get_ytm_client_missing_auth(tmp_path):
+    from likedmusic.ytmusic import _get_ytm_client
+
+    browser_path = tmp_path / "browser.json"  # does not exist
+
+    with patch("likedmusic.ytmusic.BROWSER_AUTH_PATH", browser_path):
+        with pytest.raises(FileNotFoundError, match="not found"):
+            _get_ytm_client()
+
+
+# ---------------------------------------------------------------------------
+# fetch_liked_songs — empty
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_liked_songs_empty():
+    from likedmusic.ytmusic import fetch_liked_songs
+
+    mock_ytm = MagicMock()
+    mock_ytm.get_liked_songs.return_value = {"tracks": []}
+
+    with patch("likedmusic.ytmusic._get_ytm_client", return_value=mock_ytm):
+        tracks = fetch_liked_songs()
+
+    assert tracks == []
+
+
+# ---------------------------------------------------------------------------
+# setup_ytmusic_browser — fallback to manual setup
+# ---------------------------------------------------------------------------
+
+
+def test_setup_ytmusic_browser_fallback():
+    from likedmusic.ytmusic import setup_ytmusic_browser
+
+    with (
+        patch("likedmusic.ytmusic._try_auto_setup", return_value=False),
+        patch("likedmusic.ytmusic.setup") as mock_setup,
+    ):
+        setup_ytmusic_browser()
+        mock_setup.assert_called_once()
